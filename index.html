@@ -1,0 +1,972 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ice Rush</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #0d1a2e; }
+  body { font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #f2f6fb; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; width: 100vw; height: 100vh; height: 100dvh; touch-action: none; }
+  [hidden] { display: none !important; }
+  .hud { position: fixed; pointer-events: none; text-shadow: 0 1px 4px #000c; left: 0; right: 0; text-align: center; }
+  #score { top: max(8px, env(safe-area-inset-top)); display: flex; justify-content: center; align-items: center; gap: 8px; }
+  #score .t { min-width: 46px; padding: 1px 10px; border-radius: 10px; font: 900 24px/1.25 system-ui, sans-serif; font-variant-numeric: tabular-nums; color: #fff; }
+  #score .t0 { background: #e23d4b; } #score .t1 { background: #2d7fe0; }
+  #score .t.me { box-shadow: 0 0 0 3px #ffffffcc; }
+  #clock { min-width: 70px; padding: 2px 10px; border-radius: 10px; background: #000000a0; font: 800 16px/1.2 system-ui, sans-serif; font-variant-numeric: tabular-nums; }
+  #clock small { display: block; font-size: 10px; letter-spacing: .1em; opacity: .8; }
+  #clock.ot { color: #ffd166; }
+  #hint { top: calc(max(8px, env(safe-area-inset-top)) + 48px); font-size: 14px; opacity: .9; padding: 0 14px; transition: opacity 1s; }
+  #msg { top: 40%; transform: translateY(-50%); font: 900 min(15vw, 84px)/1 system-ui, sans-serif; letter-spacing: .03em; opacity: 0; transition: opacity .25s, transform .25s; }
+  #msg { -webkit-text-stroke: 2px #0d1a2e; text-shadow: 0 4px 14px #0d1a2e99; }
+  #msg small { display: block; margin-top: 8px; font-size: 18px; font-weight: 700; letter-spacing: 0; -webkit-text-stroke: 0; color: #fff; text-shadow: 0 1px 3px #000, 0 0 8px #0d1a2e; }
+  #msg.on { opacity: 1; transform: translateY(-50%) scale(1.06); }
+  #net { bottom: max(6px, env(safe-area-inset-bottom)); font-size: 12px; opacity: .75; }
+  #pad { position: fixed; right: max(12px, env(safe-area-inset-right)); bottom: calc(max(12px, env(safe-area-inset-bottom)) + 22px); width: 190px; height: 170px; touch-action: none; }
+  #pad button { position: absolute; border-radius: 50%; border: 3px solid #ffffffc0; background: #0d1a2e99; color: #fff; font: 900 14px system-ui, sans-serif; touch-action: none; padding: 0; }
+  #pad button.on { background: #ffffff88; color: #0d1a2e; }
+  #bShoot { right: 0; bottom: 0; width: 92px; height: 92px; border-color: #ffd166 !important; }
+  #bPass { right: 102px; bottom: 6px; width: 74px; height: 74px; }
+  #bCheck { right: 14px; bottom: 104px; width: 64px; height: 64px; font-size: 12px !important; }
+  #over { position: fixed; inset: 0; display: grid; place-items: center; background: #06101eb8; }
+  .card { box-sizing: border-box; width: min(380px, calc(100vw - 32px)); max-height: 86vh; overflow: auto; padding: 22px; border-radius: 16px; background: #15284a; border: 1px solid #ffffff22; text-align: center; }
+  .card h2 { margin: 0 0 4px; font-size: 27px; }
+  .card h3 { margin: 14px 0 4px; font-size: 14px; color: #ffd166; text-align: left; }
+  .card ol { text-align: left; margin: 0; padding-left: 26px; font-size: 14px; min-height: 22px; }
+  .card li span { float: right; font-variant-numeric: tabular-nums; } .card li.me { color: #ffd166; font-weight: 700; }
+  .card p { margin: 8px 0 0; font-size: 13px; opacity: .8; }
+  #final { font: 800 20px system-ui, sans-serif; }
+  button.go { width: 100%; min-height: 48px; margin-top: 14px; border: 0; border-radius: 12px; background: #7fd3ff; color: #06223a; font: 800 17px system-ui, sans-serif; cursor: pointer; }
+</style>
+<script src="https://cdn.multiplayeragent.com/sdk/mp.global.js"></script>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div class="hud" id="score"><span class="t t0" id="s0">0</span><span id="clock">1:00</span><span class="t t1" id="s1">0</span></div>
+<div class="hud" id="hint"></div>
+<div class="hud" id="msg"></div>
+<div class="hud" id="net">Connecting…</div>
+<div id="pad" hidden><button id="bShoot">SHOOT</button><button id="bPass">PASS</button><button id="bCheck">CHECK</button></div>
+<div id="over" hidden><div class="card">
+  <h2 id="winner"></h2><div id="final"></div>
+  <h3>Scorers this game</h3><ol id="scorers"></ol>
+  <h3>Most goals</h3><ol id="board"><li>Loading…</li></ol>
+  <button class="go" id="again">Play again</button><p id="next"></p>
+</div></div>
+<script>
+/* ═══ ICE RUSH · a Multiplayer Agent starter ═══════════════════════════════════════════
+ * Top-down 3-on-3 arcade hockey: skate with momentum, carry the puck on your stick, hold to
+ * charge a slap shot, pass, and body-check whoever has it. Each team has a goalie bot.
+ * Versus, 2–6 players on two teams; bots fill every empty skater spot. Three periods.
+ *
+ * WHERE THINGS ARE (search for the "── " headers):
+ *   CONFIG ........ periods, rink size, skating, shots, checks, puck physics, goalies, bots
+ *   CONNECTION .... MP_CONNECT, joining, the offline room, who is host
+ *   RINK .......... sizes, boards with round corners, the nets, faceoff spots
+ *   PHYSICS ....... skating, the puck (boards, nets, goalies), sticks, shots and passes
+ *   GAME (HOST) ... teams, score, faceoffs, periods, the clock, the winner, checks. Only the host writes these.
+ *   BOTS .......... skater bots (chase, carry, shoot, pass, check, get open) and the goalies
+ *   ME ............ my skater, carrying, shooting, passing, checking
+ *   DRAW .......... the rink seen from YOUR side (you always attack right, or up on a phone)
+ *   HUD & RESULTS . scoreboard, clock, periods, messages, results card, leaderboard
+ *   INPUT ......... keyboard, and a thumb stick + Shoot / Pass / Check buttons on touch
+ *
+ * HOW THE MULTIPLAYER WORKS (a relay room: no server code):
+ *   - Each player skates its OWN skater on its own screen and writes it to its entity: `sk`
+ *     {x, y, vx, vy, f, st, ck} (f = facing, st = stunned, ck = checking) about 15 times a second,
+ *     `hb` (heartbeat) once a second, `rdy` (Play again), `n`/`c` (name, color) once.
+ *   - The HOST is the lowest sessionId among live players (heartbeat seen in the last 3s), worked out
+ *     every frame. The puck is shared, so the host owns it. Only the host writes the shared fields:
+ *       `game` {id, v, phase, teams, score, ko, kickAt, resumeAt, endsAt, left, period, golden, win,
+ *              overAt, goals, last}: who skates for which team (sessionIds, or bot ids "b1".."b9"), the
+ *              score, the period and the clock (timestamps). `v` goes up on every write.
+ *       `puck` {x, y, vx, vy, c, lt, h, w, s}: the puck ~15 times a second (c = who carries it, lt = last
+ *              to touch it, h = touches so far, w = 1 waiting for the faceoff, s = write number).
+ *       `bots` [{i, x, y, vx, vy, f, st, ck}]: the bot skaters and both goalies ("g0", "g1").
+ *   - A loose puck that touches YOUR stick on your screen is yours at once: you send "grab"; the host
+ *     says yes (it writes you as the carrier) unless someone got there first. While you carry it, it sits
+ *     on your stick on every screen. Shots and passes are decided on the shooter's screen and sent as
+ *     "shot" {x, y, vx, vy}; the host adopts them. A body check is decided by the checker: "check" {to};
+ *     the host knocks the puck loose and tells a checked person "knock" {to, vx, vy} (it moves itself).
+ *   - Someone who joins takes a bot's spot on the team with fewer people, mid-game; someone who leaves
+ *     is replaced by a bot. A new host adopts `game`, `puck` and `bots` and carries on.
+ *   - ?attract plays offline, bots only (the preview video is recorded from it).
+ *   - Leaderboard "rush-goals": every goal you score adds 1 to your total.
+ */
+
+// ── CONFIG ──────────────────────────────────────────────────────────────────────────
+const CONFIG = {
+  teamSize: 3,          // skaters per team (plus a goalie bot each); bots fill the spots people don't
+  periods: 3,           // periods in a game; a tie after the last goes to overtime (next goal wins)
+  periodMs: 60000,      // clock per period; it stops for goals and faceoffs
+  faceoffMs: 1800,      // ms everyone waits on their spot before the puck drops
+  goalMs: 2600,         // ms of celebration after a goal
+  breakMs: 2800,        // ms between periods
+  resultsMs: 10000,     // ms on the results card before the next game
+  rinkL: 1400, rinkW: 640, cornerR: 170, // the rink, in rink units; round corners
+  goalLine: 580,        // where each net's mouth sits, from the middle
+  goalW: 124, goalDepth: 44,
+  skaterR: 20, goalieR: 27, puckR: 9,
+  stickReach: 36,       // how far in front of you your stick blade is
+  stickR: 16,           // how big the blade's "catch" area is
+  skate: 340,           // top skating speed, units/s
+  accel: 950,           // how hard you push off (lower = more slippery)
+  turnBrake: 1.9,       // pushing against your slide stops you this much harder
+  glide: 0.7,           // how fast you slow when you stop pushing
+  carrySlow: 0.9,       // share of top speed while carrying the puck
+  shotMin: 620, shotMax: 1450, // a tap shot and a fully charged slap shot, units/s
+  chargeMs: 850,        // ms to fully charge a shot
+  passSpeed: 780,
+  shotAssist: 0.8,      // how much a shot that's roughly on target bends toward the net
+  puckFriction: 0.3, boardBounce: 0.72, maxPuck: 1550,
+  noPickMs: 250,        // after you shoot or pass you can't pick the puck straight back up
+  checkSpeed: 320,      // the burst a check gives you
+  checkMs: 260, checkEvery: 1100,
+  knock: 360,           // how hard a check shoves the one you hit
+  stunMs: 650,          // a checked skater can't skate or pick up the puck for this long...
+  stunBrake: 3,         // ...and skids to a stop this fast
+  goalieSpeed: 240,     // how fast a goalie slides across
+  goalieThink: 200,     // ms between a goalie's reads of the puck (slower = more goals)
+  goalieError: 20,      // how far off a goalie's read is, units
+  goalieHold: 650,      // ms a goalie holds a smothered puck before passing it out
+  botSpeed: 0.88,       // bots skate at this share of top speed
+  botThink: 160,        // ms between bot decisions
+  botError: 30,         // how far off bots aim, units
+  botShootRange: 420,   // bots shoot inside this distance from the net
+  botPass: 0.35,        // chance a pressured bot passes instead of pushing on
+  sendMs: 66,           // my skater and the puck (~15 a second)
+  botsMs: 100,          // the bots (~10 a second)
+  board: "rush-goals",
+};
+const TEAM_COLORS = ["#e23d4b", "#2d7fe0"], TEAM_DARK = ["#7d1520", "#123c78"], TEAM_NAMES = ["Red", "Blue"];
+const COLORS = ["#ffd166", "#ffffff", "#7cf2c9", "#c7a2ff", "#ff9f43", "#ff8fd0", "#a6f26b", "#7fe3ff"]; // each person's own color (their helmet)
+const BOT_NAMES = ["", "Biscuit", "Moose", "Grinder", "Mitts", "Bender", "Frosty", "Sauce", "Wheels", "Rocket"]; // bot "b3" is Grinder
+const GOALIE_NAMES = ["Brick", "Wall"];
+
+// ── CONNECTION ──────────────────────────────────────────────────────────────────────
+// The builder fills these in for this game. Downloaded from GitHub? Put your own pk_ key here.
+const MP_CONNECT = {
+  key: 'pk_REPLACE_ME',
+  room: 'ice-rush',
+  endpoint: 'wss://live.multiplayeragent.com',
+  apiUrl: 'https://api.multiplayeragent.com',
+};
+const ATTRACT = new URLSearchParams(location.search).has("attract");
+
+/** Same shape as the SDK client, kept in this tab: offline play and ?attract. */
+function localRoom() {
+  const id = "local", state = { entities: { players: { [id]: {} } }, shared: {} }, subs = [];
+  let queued = false;
+  const emit = () => { if (!queued) { queued = true; queueMicrotask(() => { queued = false; subs.forEach((f) => f(state)); }); } };
+  const put = (o, k, v) => { if (typeof k === "object") Object.assign(o, k); else o[k] = v; emit(); };
+  return {
+    sessionId: id, state, offline: true,
+    me: { set: (k, v) => put(state.entities.players[id], k, v) },
+    setShared: (k, v) => put(state.shared, k, v),
+    onState: (f) => { subs.push(f); f(state); }, onJoin() {}, onLeave() {}, on() {}, send() {},
+    onDisconnect() {}, onReconnect() {}, leave: async () => {},
+  };
+}
+async function connect() {
+  if (ATTRACT || typeof MP === "undefined") return localRoom();
+  try {
+    const mp = await Promise.race([MP.join({ ...MP_CONNECT }), new Promise((_, no) => setTimeout(() => no(new Error("timed out")), 10000))]);
+    window.mp = mp; // the builder calls window.mp.leave() when the page closes
+    return mp;
+  } catch (e) {
+    console.warn("Playing offline:", e && e.message);
+    return localRoom();
+  }
+}
+const parse = (v, fb) => { if (typeof v !== "string") return fb; try { return JSON.parse(v); } catch { return fb; } };
+const memo = new Map();
+/** A JSON field, parsed once per change (read-only: never mutate what this returns). */
+function cached(key, raw, fb) { const m = memo.get(key); if (m && m.raw === raw) return m.v; const v = parse(raw, fb); memo.set(key, { raw, v }); return v; }
+let net = null, S = { entities: { players: {} }, shared: {} };
+const seenHb = new Map();
+/** Players whose heartbeat moved in the last 3s (plus us), sorted by sessionId. */
+function livePlayers() {
+  const now = performance.now(), out = [];
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    const s = seenHb.get(id);
+    if (!s || s.hb !== p.hb) seenHb.set(id, { hb: p.hb, at: now });
+    if (id === net.sessionId || now - seenHb.get(id).at < 3000) out.push(id);
+  }
+  return out.sort();
+}
+let wakeHold = 0, lastFrameAt = 0; // a tab whose frames stopped (frozen, or in the background) doesn't act as host, nor for 700ms after it wakes (see frame())
+const isHost = () => livePlayers()[0] === net.sessionId && performance.now() >= wakeHold && !(lastFrameAt && performance.now() - lastFrameAt > 1000);
+const humans = () => livePlayers().filter((id) => !(ATTRACT && id === net.sessionId)); // in the preview you only watch
+
+// ── RINK ────────────────────────────────────────────────────────────────────────────
+// Rink units: x runs -HL..HL along the rink, y runs -HW..HW across. Red (team 0) defends the -x net
+// and attacks +x; Blue (team 1) the other way round.
+const HL = CONFIG.rinkL / 2, HW = CONFIG.rinkW / 2, CRN = CONFIG.cornerR, GL = CONFIG.goalLine, GW = CONFIG.goalW / 2, GD = CONFIG.goalDepth;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const wrapA = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+/** Keep a round body d {x, y, vx, vy} of radius r inside the boards. Returns how hard it hit (0 = no hit). */
+function keepInRink(d, r, bounce) {
+  const ix = HL - CRN, iy = HW - CRN;
+  let nx = 0, ny = 0, over = 0;
+  if (Math.abs(d.x) > ix && Math.abs(d.y) > iy) { // a round corner
+    const cx = Math.sign(d.x) * ix, cy = Math.sign(d.y) * iy, dx = d.x - cx, dy = d.y - cy, dist = Math.hypot(dx, dy);
+    if (dist > CRN - r) { nx = dx / dist; ny = dy / dist; over = dist - (CRN - r); }
+  } else if (Math.abs(d.x) > HL - r) { nx = Math.sign(d.x); over = Math.abs(d.x) - (HL - r); }
+  else if (Math.abs(d.y) > HW - r) { ny = Math.sign(d.y); over = Math.abs(d.y) - (HW - r); }
+  if (over <= 0) return 0;
+  d.x -= nx * over; d.y -= ny * over;
+  const vn = d.vx * nx + d.vy * ny;
+  if (vn <= 0) return 0;
+  d.vx -= (1 + bounce) * vn * nx; d.vy -= (1 + bounce) * vn * ny;
+  return vn;
+}
+// Each net is three walls (two sides and the back); the open side faces the middle of the rink.
+const NET_SEGS = [-1, 1].flatMap((sx) => [[sx * GL, -GW, sx * (GL + GD), -GW], [sx * (GL + GD), -GW, sx * (GL + GD), GW], [sx * (GL + GD), GW, sx * GL, GW]]);
+/** Bounce a round body off the nets' walls (posts included). Returns how hard it hit. */
+function hitNets(d, r, bounce) {
+  let hit = 0;
+  for (const [x1, y1, x2, y2] of NET_SEGS) {
+    const ex = x2 - x1, ey = y2 - y1, t = clamp(((d.x - x1) * ex + (d.y - y1) * ey) / (ex * ex + ey * ey), 0, 1);
+    const qx = x1 + ex * t, qy = y1 + ey * t, dx = d.x - qx, dy = d.y - qy, dist = Math.hypot(dx, dy);
+    if (dist >= r || dist < 1e-4) continue;
+    const nx = dx / dist, ny = dy / dist; d.x = qx + nx * r; d.y = qy + ny * r;
+    const vn = d.vx * nx + d.vy * ny;
+    if (vn < 0) { hit = Math.max(hit, -vn); d.vx -= (1 + bounce) * vn * nx; d.vy -= (1 + bounce) * vn * ny; }
+  }
+  return hit;
+}
+/** Is the puck all the way into a net? Returns the team whose net it is (0 = Red's, at -x), or -1. */
+const inNet = (p) => (Math.abs(p.x) > GL + CONFIG.puckR && Math.abs(p.x) < GL + GD && Math.abs(p.y) < GW ? (p.x > 0 ? 1 : 0) : -1);
+// Faceoff spots for the skaters, seen from Red's side (Red attacks +x); Blue's are turned round.
+const SPOTS = [[-70, 0], [-170, -150], [-170, 150]];
+function spotOf(team, i) { const s = SPOTS[i] || [-260, 0], f = team === 0 ? 1 : -1; return { x: s[0] * f, y: s[1] * f, f: team === 0 ? 0 : Math.PI }; }
+const goalieHome = (team) => ({ x: (team === 0 ? -1 : 1) * (GL - 20), y: 0, f: team === 0 ? 0 : Math.PI });
+
+// ── PHYSICS ─────────────────────────────────────────────────────────────────────────
+/** Skate body s toward input (ix, iy) (rink directions, length up to 1) at `share` of top speed. */
+function skate(s, ix, iy, dt, share, now) {
+  const stunned = s.stun > now, len = stunned ? 0 : Math.hypot(ix, iy);
+  const top = CONFIG.skate * share * (s.carry ? CONFIG.carrySlow : 1) + (s.checkT > now ? CONFIG.checkSpeed : 0);
+  if (len > 0.05) {
+    const along = (s.vx * ix + s.vy * iy) / len, k = along < 0 ? CONFIG.turnBrake : 1; // pushing against your slide: a hard stop
+    s.vx += (ix / len) * Math.min(1, len) * CONFIG.accel * k * dt; s.vy += (iy / len) * Math.min(1, len) * CONFIG.accel * k * dt;
+    s.f += wrapA(Math.atan2(iy, ix) - s.f) * Math.min(1, 12 * dt);
+    s.spray = along < -120;
+  } else { const f = Math.exp(-(stunned ? CONFIG.stunBrake : CONFIG.glide) * dt); s.vx *= f; s.vy *= f; s.spray = stunned && Math.hypot(s.vx, s.vy) > 120; }
+  const sp = Math.hypot(s.vx, s.vy); if (sp > top) { const k = Math.max(top / sp, 1 - 4 * dt); s.vx *= k; s.vy *= k; }
+  s.x += s.vx * dt; s.y += s.vy * dt;
+  keepInRink(s, CONFIG.skaterR, 0.4); hitNets(s, CONFIG.skaterR, 0.2);
+}
+/** Where a skater's stick blade is. */
+const stickOf = (s, reach = CONFIG.stickReach) => ({ x: s.x + Math.cos(s.f) * reach, y: s.y + Math.sin(s.f) * reach });
+/** Push body a out of body b (skaters bump). */
+function bump(a, b, min) {
+  const dx = a.x - b.x, dy = a.y - b.y, d = Math.hypot(dx, dy);
+  if (d >= min || d < 1e-3) return false;
+  a.x += (dx / d) * (min - d) * 0.5; a.y += (dy / d) * (min - d) * 0.5;
+  return true;
+}
+/** Move a loose puck dt seconds against the boards, nets and `goalies`. Returns { goalie: the goalie it bounced off, board, post, goal: the team whose net it's in, or -1 }. */
+function stepPuck(p, dt, goalies) {
+  const out = { goalie: null, board: 0, post: 0, goal: -1 }, r = CONFIG.puckR;
+  const n = Math.max(1, Math.ceil((Math.hypot(p.vx, p.vy) * dt) / 6));
+  for (let i = 0; i < n; i++) {
+    p.x += (p.vx * dt) / n; p.y += (p.vy * dt) / n;
+    for (const g of goalies) {
+      const dx = p.x - g.x, dy = p.y - g.y, d = Math.hypot(dx, dy), min = r + CONFIG.goalieR;
+      if (d >= min || d < 1e-3) continue;
+      const nx = dx / d, ny = dy / d, vn = p.vx * nx + p.vy * ny;
+      p.x = g.x + nx * min; p.y = g.y + ny * min;
+      if (vn < 0) { p.vx -= 1.45 * vn * nx; p.vy -= 1.45 * vn * ny; out.goalie = g; } // a save: pads soak up some speed
+    }
+    out.post = Math.max(out.post, hitNets(p, r, 0.55));
+    out.board = Math.max(out.board, keepInRink(p, r, CONFIG.boardBounce));
+    const goal = inNet(p); if (goal >= 0) { out.goal = goal; break; }
+  }
+  const sp = Math.hypot(p.vx, p.vy), cap = sp > CONFIG.maxPuck ? CONFIG.maxPuck / sp : 1, f = Math.exp(-CONFIG.puckFriction * dt) * cap;
+  p.vx *= f; p.vy *= f;
+  if (Math.abs(p.vx) + Math.abs(p.vy) < 3) p.vx = p.vy = 0;
+  return out;
+}
+/** Can skater s pick up a loose puck p right now? (its blade, or its body, touches it) */
+function canPick(s, p, now) {
+  if (s.stun > now || s.noPick > now) return false;
+  const st = stickOf(s);
+  return Math.hypot(p.x - st.x, p.y - st.y) < CONFIG.stickR + CONFIG.puckR || Math.hypot(p.x - s.x, p.y - s.y) < CONFIG.skaterR + CONFIG.puckR;
+}
+/** The puck's velocity for a shot by s with `charge` (0..1) toward the net of team `target`: bent toward the net when roughly on target. */
+function shotVel(s, charge, target) {
+  const speed = CONFIG.shotMin + (CONFIG.shotMax - CONFIG.shotMin) * clamp(charge, 0, 1);
+  let a = s.f;
+  const gx = (target === 1 ? 1 : -1) * GL, aimY = clamp(s.y * 0.2, -GW * 0.7, GW * 0.7) + (s.aimY || 0), want = Math.atan2(aimY - s.y, gx - s.x);
+  if (Math.abs(wrapA(want - a)) < 0.6 && Math.abs(gx - s.x) < 800) a += wrapA(want - a) * CONFIG.shotAssist;
+  return { vx: Math.cos(a) * speed + s.vx * 0.3, vy: Math.sin(a) * speed + s.vy * 0.3 };
+}
+/** The puck's velocity for a pass from s to `mate` (leading it a little). */
+function passVel(s, mate) {
+  const T = Math.hypot(mate.x - s.x, mate.y - s.y) / CONFIG.passSpeed, tx = mate.x + (mate.vx || 0) * T * 0.8, ty = mate.y + (mate.vy || 0) * T * 0.8, a = Math.atan2(ty - s.y, tx - s.x);
+  return { vx: Math.cos(a) * CONFIG.passSpeed, vy: Math.sin(a) * CONFIG.passSpeed };
+}
+/** The best teammate to pass to: ahead of where s faces, open, not too close. */
+function pickMate(s, team, g) {
+  let best = null, bestScore = -1e9;
+  for (const id of g.teams[team]) {
+    if (id === s.id) continue;
+    const m = bodyOf(id); if (!m) continue;
+    const dx = m.x - s.x, dy = m.y - s.y, d = Math.hypot(dx, dy); if (d < 60) continue;
+    const ang = Math.abs(wrapA(Math.atan2(dy, dx) - s.f)), score = -ang * 300 - d * 0.3 + (team === 0 ? m.x : -m.x) * 0.2;
+    if (score > bestScore) { bestScore = score; best = m; }
+  }
+  return best;
+}
+
+// ── GAME (HOST) ─────────────────────────────────────────────────────────────────────
+const host = { last: null, wasHost: false, bots: new Map(), lastPuck: 0, lastBots: 0, lastBody: "" };
+let puck = { x: 0, y: 0, vx: 0, vy: 0, c: "", lt: "", h: 0, s: 0, w: 1 }; // the host's real puck; everyone else's prediction of it
+const isBot = (id) => /^[bg]\d$/.test(id);
+const isGoalie = (id) => /^g\d$/.test(id);
+const teamOf = (g, id) => (isGoalie(id) ? +id[1] : g.teams[0].includes(id) ? 0 : g.teams[1].includes(id) ? 1 : -1);
+/** The game as state has it, or the host's own newer write that hasn't come back yet. `v` only goes up. */
+function game() {
+  const g = cached("game", S.shared.game, null);
+  return host.last && isHost() && (!g || host.last.v > g.v) ? host.last : g;
+}
+function writeGame(g) { g = { ...g, v: (game()?.v ?? 0) + 1 }; host.last = g; net.setShared("game", JSON.stringify(g)); return g; }
+/** Fill gaps (null) and both teams up to teamSize with bots; drop spare bots. */
+function fillBots(teams) {
+  const used = new Set(teams.flat()), size = CONFIG.teamSize;
+  const newBot = () => { let k = 1; while (used.has("b" + k)) k++; used.add("b" + k); return "b" + k; };
+  return teams.map((t) => {
+    t = t.map((id) => id || newBot());
+    for (let i = t.length - 1; i >= 0 && t.length > size; i--) if (isBot(t[i])) t.splice(i, 1);
+    while (t.length < size) t.push(newBot());
+    return t;
+  });
+}
+/** Everyone still here keeps their spot; a newcomer takes a bot's spot on the team with fewer people. */
+function arrangeTeams(teams, people) {
+  const t = teams.map((team) => team.map((id) => (isBot(id) || people.includes(id) ? id : null)));
+  const count = (k) => t[k].filter((id) => id && !isBot(id)).length;
+  for (const id of people) {
+    if (t[0].includes(id) || t[1].includes(id)) continue;
+    const k = count(0) <= count(1) ? 0 : 1;
+    if (count(k) >= CONFIG.teamSize) continue; // every spot has a person in it: this one watches
+    let i = t[k].indexOf(null); if (i < 0) i = t[k].findIndex(isBot);
+    if (i < 0) t[k].push(id); else t[k][i] = id;
+  }
+  return fillBots(t);
+}
+/** A fresh game: the people here shuffled into two teams, bots in the gaps, 0–0, period 1. */
+function newGame(id) {
+  const people = humans().sort(() => Math.random() - 0.5), teams = [[], []];
+  people.forEach((p, i) => teams[i % 2].push(p));
+  const kickAt = Date.now() + CONFIG.faceoffMs + 600;
+  return { id, phase: "play", teams: fillBots(teams), score: [0, 0], ko: 1, kickAt, resumeAt: 0, endsAt: kickAt + CONFIG.periodMs, left: CONFIG.periodMs,
+    period: 1, golden: 0, win: -1, overAt: 0, goals: {}, last: null };
+}
+/** Everyone back on their spot (bots here; people move themselves when they see `ko` change), puck on the dot. */
+function faceoffReset(g) {
+  for (const b of host.bots.values()) {
+    const k = teamOf(g, b.id); if (k < 0) continue;
+    Object.assign(b, isGoalie(b.id) ? goalieHome(k) : spotOf(k, g.teams[k].indexOf(b.id)), { vx: 0, vy: 0, carry: false, stun: 0, checkT: 0 });
+  }
+  Object.assign(puck, { x: 0, y: 0, vx: 0, vy: 0, c: "", lt: "", w: 1 }); writePuck(); writeBots();
+}
+const r0 = Math.round;
+function writePuck(onlyIfMoved) {
+  const body = JSON.stringify({ x: r0(puck.x), y: r0(puck.y), vx: r0(puck.vx), vy: r0(puck.vy), c: puck.c, lt: puck.lt, h: puck.h, w: puck.w });
+  host.lastPuck = performance.now();
+  if (onlyIfMoved && body === host.lastBody) return; // nothing moved: save the message
+  host.lastBody = body; puck.s++;
+  net.setShared("puck", body.slice(0, -1) + `,"s":${puck.s}}`);
+}
+const skWire = (s, now) => ({ x: r0(s.x), y: r0(s.y), vx: r0(s.vx), vy: r0(s.vy), f: +s.f.toFixed(2), st: s.stun > now ? 1 : 0, ck: s.checkT > now ? 1 : 0 });
+function writeBots() { const now = performance.now(); host.lastBots = now; net.setShared("bots", JSON.stringify([...host.bots.values()].map((b) => ({ i: b.id, ...skWire(b, now) })))); }
+const newBody = (id, x, y, f) => ({ id, x, y, vx: 0, vy: 0, f, stun: 0, checkT: 0, checkCd: 0, noPick: 0, carry: false, thinkAt: 0, ex: 0, ey: 0, aimY: 0, charge: 0, holdUntil: 0, shootAt: 0 });
+/** Become host: take over the game, the puck and the bots exactly as state has them. */
+function adopt() {
+  host.wasHost = true; host.bots.clear();
+  const s = parse(S.shared.puck, null);
+  if (s) { // our own screen has been running the puck on from this write: keep that (the write can be seconds old if the old host froze)
+    if (s.s !== pred.lastS) Object.assign(puck, { x: s.x, y: s.y, vx: s.vx, vy: s.vy, c: s.c || "", lt: s.lt || "", h: s.h, w: s.w });
+    puck.s = s.s;
+  }
+  for (const q of parse(S.shared.bots, [])) { const v = views.get(q.i) || q; host.bots.set(q.i, Object.assign(newBody(q.i, v.x, v.y, v.f), { vx: q.vx, vy: q.vy })); } // from where this screen drew them, so they don't jump
+}
+/** host.bots holds exactly the bots on the ice: the bot skaters and both goalies. */
+function syncBots(g) {
+  const want = [...g.teams.flat().filter(isBot), "g0", "g1"];
+  for (const id of want) if (!host.bots.has(id)) { const k = teamOf(g, id), s = isGoalie(id) ? goalieHome(k) : spotOf(k, g.teams[k].indexOf(id)); host.bots.set(id, newBody(id, s.x, s.y, s.f)); }
+  for (const id of [...host.bots.keys()]) if (!want.includes(id)) host.bots.delete(id);
+}
+/** The puck goes in `side`'s net: a goal for the other team (or an own goal), maybe the winner. */
+function scoreGoal(g, side, t) {
+  const team = 1 - side, lt = puck.lt, own = !!lt && teamOf(g, lt) === side, score = [...g.score], goals = { ...g.goals };
+  score[team]++;
+  if (lt && !own && !isGoalie(lt)) goals[lt] = [((goals[lt] || [])[0] || 0) + 1, nameOf(lt)];
+  puck.c = ""; writePuck();
+  return writeGame({ ...g, phase: "goal", score, goals, win: g.golden ? team : -1, resumeAt: t + CONFIG.goalMs, left: Math.max(0, g.endsAt - t),
+    last: { t: team, id: lt, n: lt ? nameOf(lt) : "", own: own ? 1 : 0 } });
+}
+/** The clock ran out in a period: the next period, or the end (a tie after the last period goes to overtime). */
+function endPeriod(g, t) {
+  if (g.period < CONFIG.periods) return writeGame({ ...g, phase: "break", resumeAt: t + CONFIG.breakMs, left: 0 });
+  if (g.score[0] === g.score[1]) return writeGame({ ...g, phase: "break", resumeAt: t + CONFIG.breakMs, left: 0, golden: 1 });
+  return writeGame({ ...g, phase: "over", win: g.score[0] > g.score[1] ? 0 : 1, overAt: t + CONFIG.resultsMs });
+}
+function faceoff(g, t, extra) { const kickAt = t + CONFIG.faceoffMs; g = writeGame({ ...g, ...extra, phase: "play", ko: g.ko + 1, kickAt, endsAt: kickAt + (extra.left ?? g.left) }); faceoffReset(g); return g; }
+function hostTick(dt, now) {
+  if (!host.wasHost) adopt();
+  const t = Date.now();
+  let g = game();
+  if (!g) { g = writeGame(newGame(1)); syncBots(g); faceoffReset(g); }
+  const teams = arrangeTeams(g.teams, humans());
+  if (JSON.stringify(teams) !== JSON.stringify(g.teams)) g = writeGame({ ...g, teams });
+  syncBots(g);
+  if (g.phase === "goal" && t >= g.resumeAt) {
+    if (g.win >= 0) g = writeGame({ ...g, phase: "over", overAt: t + CONFIG.resultsMs });
+    else if (!g.golden && g.left <= 0) g = endPeriod(g, t);
+    else g = faceoff(g, t, {});
+  }
+  if (g.phase === "break" && t >= g.resumeAt) g = faceoff(g, t, g.golden ? { period: g.period + 1, left: 1e9 } : { period: g.period + 1, left: CONFIG.periodMs });
+  if (g.phase === "play" && !g.golden && t >= g.endsAt && t >= g.kickAt) g = endPeriod(g, t);
+  if (g.phase === "over") {
+    const seated = g.teams.flat().filter((id) => !isBot(id));
+    const ready = seated.length && seated.every((id) => (id === net.sessionId ? myReady : (S.entities.players[id] || {}).rdy) === g.id);
+    if (t > g.overAt || ready) { g = writeGame(newGame(g.id + 1)); syncBots(g); faceoffReset(g); }
+  }
+  for (const b of host.bots.values()) (isGoalie(b.id) ? goalieTick : botTick)(b, g, dt, now, t);
+  const live = g.phase === "play" && t >= g.kickAt;
+  if (puck.c && (!g.teams.flat().includes(puck.c) && !isGoalie(puck.c) || !bodyOf(puck.c))) { puck.c = ""; puck.h++; } // the carrier left
+  if (live) {
+    puck.w = 0;
+    if (puck.c) { const c = bodyOf(puck.c), st = stickOf(c); Object.assign(puck, { x: st.x, y: st.y, vx: c.vx, vy: c.vy }); }
+    else {
+      const res = stepPuck(puck, dt, [...host.bots.values()].filter((b) => isGoalie(b.id)));
+      if (res.goalie) { puck.h++; saveFx(); } // a save keeps the shooter as the last touch: one that bounces in is still their goal
+      bounceFx(res);
+      if (res.goal >= 0) { g = scoreGoal(g, res.goal, t); }
+      else { // who picks it up: the host's own skater and the bots (other people claim it with "grab")
+        const pickers = [...host.bots.values()].filter((b) => !isGoalie(b.id));
+        if (teamOf(g, net.sessionId) >= 0) pickers.push(me);
+        for (const s of pickers) if (canPick(s, puck, now)) { giveCarry(s === me ? net.sessionId : s.id); break; }
+      }
+    }
+  } else if (g.phase !== "goal") puck.c = "";
+  if (now - host.lastPuck > CONFIG.sendMs) writePuck(true);
+  if (now - host.lastBots > CONFIG.botsMs) writeBots();
+}
+function giveCarry(id) { puck.c = id; puck.lt = id; puck.h++; puck.vx = puck.vy = 0; writePuck(); }
+/** Someone else's screen says their stick touched the loose puck. Yes, unless it's already carried or far from where the host has it. */
+function applyGrab(msg, from) {
+  const g = game();
+  if (!g || g.phase !== "play" || msg.g !== g.id || msg.ko !== g.ko || Date.now() < g.kickAt || teamOf(g, from) < 0 || puck.c || puck.w) return;
+  if (Math.hypot(+msg.x - puck.x, +msg.y - puck.y) > 90) return;
+  giveCarry(from);
+}
+/** Someone else's screen says it shot or passed: adopt the puck it sent, if they carried it (or it was loose near them). */
+function applyShot(msg, from) {
+  const g = game();
+  if (!g || g.phase !== "play" || msg.g !== g.id || msg.ko !== g.ko || teamOf(g, from) < 0) return;
+  const x = +msg.x, y = +msg.y, vx = +msg.vx, vy = +msg.vy;
+  if (!isFinite(x + y + vx + vy) || (puck.c !== from && (puck.c || Math.hypot(x - puck.x, y - puck.y) > 90))) return;
+  const k = Math.min(1, CONFIG.maxPuck / (Math.hypot(vx, vy) || 1));
+  Object.assign(puck, { x, y, vx: vx * k, vy: vy * k, c: "", lt: from, w: 0 }); puck.h++;
+  shotFx(x, y, Math.hypot(vx, vy)); writePuck();
+}
+/** `from` body-checked `to`: knock them (a person moves itself on "knock"), and the puck comes loose. */
+function applyCheck(from, to) {
+  const g = game(), a = bodyOf(from), b = bodyOf(to);
+  if (!g || g.phase !== "play" || !a || !b || teamOf(g, from) === teamOf(g, to) || teamOf(g, to) < 0 || isGoalie(to)) return;
+  if (Math.hypot(a.x - b.x, a.y - b.y) > CONFIG.skaterR * 2 + 70) return; // slack: their latest position can be a little old
+  const d = Math.hypot(b.x - a.x, b.y - a.y) || 1, vx = ((b.x - a.x) / d) * CONFIG.knock, vy = ((b.y - a.y) / d) * CONFIG.knock;
+  if (puck.c === to) { Object.assign(puck, { c: "", vx: b.vx * 0.4 + vx * 0.7 + (Math.random() - 0.5) * 120, vy: b.vy * 0.4 + vy * 0.7 + (Math.random() - 0.5) * 120 }); puck.h++; writePuck(); }
+  if (to === net.sessionId) knocked(vx, vy);
+  else if (host.bots.has(to)) { Object.assign(b, { vx: b.vx + vx, vy: b.vy + vy, stun: performance.now() + CONFIG.stunMs }); }
+  else net.send("knock", { to, vx: r0(vx), vy: r0(vy) });
+  checkFx(b.x, b.y);
+}
+
+// ── BOTS ────────────────────────────────────────────────────────────────────────────
+/** Where a skater is on this screen: mine, a bot (the host's live one, or eased from state), or another person's. */
+function bodyOf(id) { return id === net.sessionId ? me : (host.wasHost && host.bots.get(id)) || views.get(id) || null; }
+function botTick(b, g, dt, now, t) {
+  const team = teamOf(g, b.id); if (team < 0) return;
+  b.carry = puck.c === b.id;
+  if (g.phase === "play" && t < g.kickAt) { Object.assign(b, spotOf(team, g.teams[team].indexOf(b.id)), { vx: 0, vy: 0 }); return; } // waiting for the puck to drop
+  let [tx, ty, act] = g.phase === "play" ? botPlan(b, g, team, now) : [b.x, b.y, ""];
+  const dx = tx - b.x, dy = ty - b.y, d = Math.hypot(dx, dy), m = Math.min(1, d / 40);
+  skate(b, d ? (dx / d) * m : 0, d ? (dy / d) * m : 0, dt, CONFIG.botSpeed * (g.phase === "play" ? 1 : 0.4), now);
+  for (const id of g.teams.flat()) { const o = id !== b.id && bodyOf(id); if (o) bump(b, o, CONFIG.skaterR * 2); }
+  if (act === "check" && now > b.checkCd) { b.checkT = now + CONFIG.checkMs; b.checkCd = now + CONFIG.checkEvery * 1.4; }
+  if (b.checkT > now) for (const id of g.teams[1 - team]) { const o = bodyOf(id); if (o && Math.hypot(o.x - b.x, o.y - b.y) < CONFIG.skaterR * 2 + 4) { b.checkT = 0; applyCheck(b.id, id); break; } }
+  if (!b.carry) return;
+  if (act === "shoot") { // wind up, then let it go
+    if (!b.shootAt) b.shootAt = now + 150 + Math.random() * 450;
+    if (now >= b.shootAt) { b.shootAt = 0; b.aimY = (Math.random() < 0.5 ? -1 : 1) * GW * (0.55 + Math.random() * 0.25); releasePuck(b.id, shotVel(b, 0.35 + Math.random() * 0.65, 1 - team), stickOf(b)); }
+  } else if (act === "pass") { const mate = pickMate(b, team, g); if (mate) releasePuck(b.id, passVel(b, mate), stickOf(b)); }
+}
+/** The host lets go of the puck for a bot or for itself: it flies from the stick. */
+function releasePuck(id, v, at) {
+  const s = bodyOf(id); if (s) s.noPick = performance.now() + CONFIG.noPickMs;
+  Object.assign(puck, { x: at.x, y: at.y, vx: v.vx, vy: v.vy, c: "", lt: id }); puck.h++;
+  shotFx(at.x, at.y, Math.hypot(v.vx, v.vy)); writePuck();
+}
+/** One bot skater's plan: [target x, target y, action ("shoot", "pass", "check" or "")]. */
+function botPlan(b, g, team, now) {
+  const dir = team === 0 ? 1 : -1, oppX = dir * GL, ownX = -dir * GL, mates = g.teams[team], slot = mates.indexOf(b.id);
+  if (now > b.thinkAt) { b.thinkAt = now + CONFIG.botThink * (0.7 + Math.random() * 0.6); b.ex = (Math.random() - 0.5) * 2 * CONFIG.botError; b.ey = (Math.random() - 0.5) * 2 * CONFIG.botError; }
+  const carrier = puck.c, carrierTeam = carrier ? teamOf(g, carrier) : -1;
+  if (carrier === b.id) { // I have it: drive at the net, shoot when close, pass when someone is in my face
+    const dGoal = Math.hypot(oppX - b.x, b.y), facing = Math.abs(wrapA(Math.atan2(-b.y, oppX - b.x) - b.f)) < 0.7;
+    if (dGoal < CONFIG.botShootRange && facing && dir * b.x < GL - 30) return [oppX, 0, "shoot"];
+    const pressed = g.teams[1 - team].some((id) => { const o = bodyOf(id); return o && Math.hypot(o.x - b.x, o.y - b.y) < 80 && ((o.x - b.x) * dir > -10); });
+    if (pressed && Math.random() < CONFIG.botPass * 0.05) return [b.x, b.y, "pass"]; // ~the chance spread over the frames it stays pressed
+    return [oppX - dir * 120, clamp(b.ey * 3, -160, 160), ""];
+  }
+  const far = (id) => { const s = bodyOf(id); return s ? Math.hypot(s.x - puck.x, s.y - puck.y) : 1e9; };
+  const chaser = mates.reduce((best, id) => (far(id) < far(best) ? id : best), mates[0]);
+  if (carrierTeam === team) { // a teammate has it: get open ahead of them, in my own lane
+    const c = bodyOf(carrier) || puck, lane = [-140, 140, 0][slot] || 0;
+    return [clamp(c.x + dir * 200 + b.ex, -GL + 40, GL - 40), clamp(lane + b.ey, -HW + 40, HW - 40), ""];
+  }
+  if (chaser === b.id || carrierTeam < 0 && far(b.id) < 120) { // go get it: the puck, or the one carrying it (and check them)
+    const lead = carrier ? 0.15 : 0.25, tx = puck.x + puck.vx * lead, ty = puck.y + puck.vy * lead;
+    const near = Math.hypot(tx - b.x, ty - b.y), act = carrier && near < 70 ? "check" : "";
+    return [tx, ty, act];
+  }
+  // help out: one stays back between the puck and our net, the other covers the slot
+  const back = slot === mates.length - 1 || slot === 0 && chaser !== mates[0];
+  if (back) return [clamp((puck.x + ownX) / 2 + b.ex, -GL + 60, GL - 60), clamp(puck.y * 0.5 + b.ey, -HW + 50, HW - 50), ""];
+  return [clamp(puck.x - dir * 90 + b.ex, -GL + 40, GL - 40), clamp(-puck.y * 0.6 + b.ey, -HW + 50, HW - 50), ""];
+}
+/** A goalie: slides across its crease with the puck, smothers slow pucks, then passes out. */
+function goalieTick(b, g, dt, now, t) {
+  const team = +b.id[1], home = goalieHome(team), dir = team === 0 ? 1 : -1;
+  b.carry = puck.c === b.id;
+  if (g.phase === "play" && t < g.kickAt) { Object.assign(b, home, { vx: 0, vy: 0 }); return; }
+  if (now > b.thinkAt) { // a read of the puck: where a shot would cross the crease line; otherwise just follow the puck across
+    b.thinkAt = now + CONFIG.goalieThink;
+    let ty = puck.y * 0.55;
+    if (!puck.c && puck.vx * dir < -200) { const T = (home.x - puck.x) / puck.vx; if (T > 0 && T < 1.2) ty = puck.y + puck.vy * T; }
+    b.ty = clamp(ty + (Math.random() - 0.5) * 2 * CONFIG.goalieError, -GW - 6, GW + 6);
+  }
+  const ty = b.ty || 0;
+  const tx = home.x + dir * (Math.abs(puck.x - home.x) < 300 ? 8 : 2); // steps out a little to cut the angle
+  const dx = tx - b.x, dy = ty - b.y, d = Math.hypot(dx, dy), sp = Math.min(CONFIG.goalieSpeed, d * 8);
+  b.vx = d ? (dx / d) * sp : 0; b.vy = d ? (dy / d) * sp : 0; b.x += b.vx * dt; b.y += b.vy * dt;
+  b.f = Math.atan2(puck.y - b.y, puck.x - b.x);
+  if (g.phase !== "play" || t < g.kickAt) return;
+  if (!puck.c && Math.hypot(puck.vx, puck.vy) < 260 && Math.hypot(puck.x - b.x, puck.y - b.y) < CONFIG.goalieR + CONFIG.puckR + 8 && now > b.noPick) { giveCarry(b.id); b.holdUntil = now + CONFIG.goalieHold; saveFx(); }
+  if (b.carry && now > b.holdUntil) { // pass it out to the most open teammate up the ice
+    const mate = g.teams[team].map(bodyOf).filter(Boolean).sort((p, q) => dir * (q.x - p.x))[1] || g.teams[team].map(bodyOf).filter(Boolean)[0];
+    const at = { x: b.x + dir * (CONFIG.goalieR + 14), y: b.y };
+    if (mate) releasePuck(b.id, passVel({ ...b, ...at }, mate), at); else releasePuck(b.id, { vx: dir * 700, vy: (b.y >= 0 ? 1 : -1) * 300 }, at);
+  }
+}
+
+// ── ME ──────────────────────────────────────────────────────────────────────────────
+let myName = "";
+try { myName = localStorage.getItem("mpa-name") || ""; } catch {}
+myName = myName || ["Swift", "Lucky", "Slick", "Speedy", "Golden", "Sneaky"][Math.floor(Math.random() * 6)] + " " + ["Blade", "Sniper", "Winger", "Skater", "Dangler", "Slapper"][Math.floor(Math.random() * 6)];
+let myColor = COLORS[0], myReady = 0; // the color is picked on join: the first one nobody in the room has
+const me = Object.assign(newBody("", -70, 0, 0), { placed: "", lastSend: 0, lastJson: "", charging: 0 });
+const pred = { lastS: -1, mineAt: 0, offX: 0, offY: 0 }; // a non-host's puck prediction
+const act = { shoot: false, pass: false, check: false }; // buttons held / pressed this frame
+function myTick(dt, g, now) {
+  const team = teamOf(g, net.sessionId), t = Date.now(), live = g.phase === "play" && t >= g.kickAt;
+  const key = team >= 0 ? `${g.id}:${g.ko}:${team}` : "";
+  if (key !== me.placed) { me.placed = key; me.charging = 0; if (team >= 0) Object.assign(me, spotOf(team, g.teams[team].indexOf(net.sessionId)), { vx: 0, vy: 0, stun: 0, checkT: 0 }); }
+  me.id = net.sessionId; me.carry = puck.c === net.sessionId;
+  if (team >= 0) {
+    if (g.phase === "play" && t < g.kickAt) { me.vx = me.vy = 0; }
+    else { const [ix, iy] = myInput(); skate(me, ix, iy, dt, 1, now); }
+    for (const id of g.teams.flat()) { const o = id !== net.sessionId && bodyOf(id); if (o) bump(me, o, CONFIG.skaterR * 2); }
+    if (live) myActions(g, team, now);
+    const json = JSON.stringify(skWire(me, now));
+    if (now - me.lastSend > CONFIG.sendMs && json !== me.lastJson) { me.lastSend = now; me.lastJson = json; net.me.set("sk", json); }
+  }
+  act.pass = act.check = false;
+  if (isHost()) return;
+  // Not the host: our puck runs on its own between writes. A write replaces it only when something new happened
+  // there (more touches than we know of, a faceoff, a goal), or when we drifted far off. A write is always a little
+  // old, so one with the same touch count would drag the puck back in time (and off our own stick).
+  const s = cached("puck", S.shared.puck, null);
+  if (s && s.s !== pred.lastS) {
+    pred.lastS = s.s;
+    const off = Math.hypot(puck.x - s.x, puck.y - s.y), mine = now - pred.mineAt < 450;
+    if (!live || s.h > puck.h || s.w !== puck.w || (!mine && (s.h !== puck.h || s.c !== puck.c || (!s.c && off > 40 + Math.hypot(s.vx, s.vy) * 0.25)))) {
+      if (!s.c && !puck.c && off < 200) { pred.offX += puck.x - s.x; pred.offY += puck.y - s.y; } // draw the jump smoothly
+      Object.assign(puck, { x: s.x, y: s.y, vx: s.vx, vy: s.vy, c: s.c || "", lt: s.lt || "", h: s.h, w: s.w });
+    }
+  }
+  if (!live) return;
+  if (puck.c) { const c = bodyOf(puck.c); if (c) { const st = stickOf(c); Object.assign(puck, { x: st.x, y: st.y, vx: c.vx, vy: c.vy }); } return; }
+  const res = stepPuck(puck, dt, ["g0", "g1"].map(bodyOf).filter(Boolean));
+  bounceFx(res);
+  if (team >= 0 && canPick(me, puck, now)) { // my stick touched it on my screen: it's mine (the host confirms)
+    puck.c = net.sessionId; puck.lt = net.sessionId; puck.h++; pred.mineAt = now;
+    net.send("grab", { x: r0(puck.x), y: r0(puck.y), g: g.id, ko: g.ko });
+  }
+}
+/** Shoot (hold to charge, let go to fire), pass and check, for my own skater. */
+function myActions(g, team, now) {
+  if (me.carry && act.shoot) me.charging = me.charging || now;
+  if (me.charging && (!act.shoot || !me.carry)) { // let go: fire
+    const charge = (now - me.charging) / CONFIG.chargeMs; me.charging = 0;
+    if (me.carry) { me.aimY = 0; letGo(shotVel(me, charge, 1 - team), g); }
+  }
+  if (act.pass && me.carry) { const mate = pickMate(me, team, g); letGo(mate ? passVel(me, mate) : { vx: Math.cos(me.f) * CONFIG.passSpeed, vy: Math.sin(me.f) * CONFIG.passSpeed }, g); }
+  if (act.check && now > me.checkCd && me.stun < now) { me.checkT = now + CONFIG.checkMs; me.checkCd = now + CONFIG.checkEvery; me.vx += Math.cos(me.f) * CONFIG.checkSpeed; me.vy += Math.sin(me.f) * CONFIG.checkSpeed; sfx("whoosh"); }
+  if (me.checkT > now) for (const id of g.teams[1 - team]) {
+    const o = bodyOf(id); if (!o || Math.hypot(o.x - me.x, o.y - me.y) > CONFIG.skaterR * 2 + 4) continue;
+    me.checkT = 0; me.vx *= 0.3; me.vy *= 0.3;
+    if (isHost()) applyCheck(net.sessionId, id); else { net.send("check", { to: id, g: g.id }); checkFx(o.x, o.y); }
+    break;
+  }
+}
+/** I shoot or pass: the puck flies from my stick at once on my screen; the host adopts it. */
+function letGo(v, g) {
+  const st = stickOf(me); me.noPick = performance.now() + CONFIG.noPickMs; me.carry = false;
+  if (isHost()) { releasePuck(net.sessionId, v, st); return; }
+  Object.assign(puck, { x: st.x, y: st.y, vx: v.vx, vy: v.vy, c: "", lt: net.sessionId }); puck.h++; pred.mineAt = performance.now();
+  shotFx(st.x, st.y, Math.hypot(v.vx, v.vy));
+  net.send("shot", { x: r0(st.x), y: r0(st.y), vx: r0(v.vx), vy: r0(v.vy), g: g.id, ko: g.ko });
+}
+/** The host says someone checked me: I fly off and can't skate for a moment (the puck is already loose). */
+function knocked(vx, vy) { me.vx += vx; me.vy += vy; me.stun = performance.now() + CONFIG.stunMs; me.charging = 0; shake = Math.max(shake, 10); sfx("check"); }
+
+// ── DRAW ────────────────────────────────────────────────────────────────────────────
+const cv = document.getElementById("game"), ctx = cv.getContext("2d");
+let W = 0, H = 0, DPR = 1, scale = 1, wide = true, M = [1, 0, 0, 1], CY = 0, shake = 0;
+const cam = { x: 0, y: 0, z: 1 }; // what the view centers on, in rink units, and its zoom (only the preview moves it)
+function fit() {
+  DPR = Math.min(2, devicePixelRatio || 1); W = innerWidth; H = innerHeight; cv.width = W * DPR; cv.height = H * DPR; wide = W >= H;
+  const long = CONFIG.rinkL + 50, short = CONFIG.rinkW + 50;
+  scale = wide ? Math.min((W - 16) / long, (H - 84) / short) : Math.min((W - 12) / short, (H - 84) / long);
+  CY = H / 2 + 14;
+}
+addEventListener("resize", fit); addEventListener("orientationchange", fit); fit();
+/** The view from your side: you attack to the right (wide screens) or up (tall ones). M maps rink to screen. */
+function setView(team) { const f = team === 1 ? -1 : 1; M = wide ? [f, 0, 0, f] : [0, f, -f, 0]; }
+const toScreen = (x, y) => { x -= cam.x; y -= cam.y; const k = scale * cam.z; return [W / 2 + (M[0] * x + M[1] * y) * k, CY + (M[2] * x + M[3] * y) * k]; };
+/** The preview zooms in and follows the puck, so the action reads in a small card. */
+function moveCam(dt) {
+  if (!ATTRACT) return;
+  cam.z = 1.5;
+  const k = scale * cam.z, ex = Math.max(0, HL + 25 - W / 2 / k), ey = Math.max(0, HW + 25 - (H / 2 - 14) / k), a = 1 - Math.exp(-dt * 2.5);
+  cam.x += (clamp(puck.x, -ex, ex) - cam.x) * a; cam.y += (clamp(puck.y, -ey, ey) - cam.y) * a;
+}
+const views = new Map(); // id -> another person's or (not host) a bot's skater, eased toward its last write
+/** Ease every other skater toward its latest write, guessing ahead with its speed. */
+function syncViews(dt) {
+  const now = performance.now(), k = 1 - Math.exp(-dt * 16), seen = new Set(), src = [], live = new Set(livePlayers());
+  for (const [id, p] of Object.entries(S.entities.players || {})) if (id !== net.sessionId && p.sk && live.has(id)) src.push([id, p.sk, cached("sk:" + id, p.sk, null)]);
+  if (!isHost()) { const raw = S.shared.bots; for (const q of cached("bots", raw, []) || []) src.push([q.i, raw, q]); }
+  for (const [id, raw, f] of src) {
+    if (!f || typeof f.x !== "number") continue;
+    seen.add(id);
+    let v = views.get(id);
+    if (!v) { v = { id, x: f.x, y: f.y, vx: 0, vy: 0, f: +f.f || 0, tx: f.x, ty: f.y, tf: +f.f || 0, raw: null, at: now, stun: 0, checkT: 0 }; views.set(id, v); }
+    if (raw !== v.raw) {
+      Object.assign(v, { tx: f.x, ty: f.y, tf: +f.f || 0, vx: +f.vx || 0, vy: +f.vy || 0, raw, at: now, stun: f.st ? now + 200 : 0, checkT: f.ck ? now + 200 : 0 });
+      if (Math.hypot(v.tx - v.x, v.ty - v.y) > 220) { v.x = v.tx; v.y = v.ty; } // a faceoff: jump there
+    }
+    const ahead = Math.min(0.15, (now - v.at) / 1000);
+    v.x += (v.tx + v.vx * ahead - v.x) * k; v.y += (v.ty + v.vy * ahead - v.y) * k; v.f += wrapA(v.tf - v.f) * k;
+  }
+  for (const id of views.keys()) if (!seen.has(id)) views.delete(id);
+}
+/** Every skater to draw: { id, team, x, y, f, goalie, color, name, mine, bot, stun, check }. */
+function drawList(g) {
+  const out = [], now = performance.now();
+  for (const id of [...g.teams[0], ...g.teams[1], "g0", "g1"]) {
+    const s = bodyOf(id); if (!s) continue;
+    const p = S.entities.players[id] || {};
+    out.push({ id, team: teamOf(g, id), x: s.x, y: s.y, f: s.f, goalie: isGoalie(id), bot: isBot(id), mine: id === net.sessionId, stun: s.stun > now, check: s.checkT > now, spray: s.spray,
+      color: id === net.sessionId ? myColor : isBot(id) ? null : p.c || "#ddd", name: nameOf(id) });
+  }
+  return out;
+}
+const parts = [], trail = [], lamps = [0, 0];
+let lastFx = 0;
+function sparks(x, y, color, n, speed, life = 0.5, size = 5) { for (let i = 0; i < n; i++) { const a = Math.random() * Math.PI * 2, s = speed * (0.3 + Math.random()); parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: life * (0.6 + Math.random() * 0.8), color, size: size * (0.5 + Math.random()) }); } }
+function shotFx(x, y, speed) { sparks(x, y, "#ffffff", 8, 120 + speed * 0.15, 0.3, 4); sfx(speed > 1000 ? "slap" : "shot", Math.min(1, speed / CONFIG.shotMax)); }
+function saveFx() { const now = performance.now(); if (now - lastFx < 120) return; lastFx = now; sparks(puck.x, puck.y, "#dff3ff", 12, 220, 0.4); sfx("save"); }
+function checkFx(x, y) { sparks(x, y, "#ffffff", 16, 260, 0.45, 6); shake = Math.max(shake, 7); sfx("check"); }
+function bounceFx(res) { if (res.board > 150) sfx("board", Math.min(1, res.board / 1200)); if (res.post > 300) { sfx("post"); shake = Math.max(shake, 4); } }
+
+function draw(g, dt, now) {
+  const team = teamOf(g, net.sessionId); setView(team < 0 ? 0 : team);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.fillStyle = "#0d1a2e"; ctx.fillRect(0, 0, W, H);
+  shake *= Math.exp(-dt * 8);
+  moveCam(dt);
+  const k = DPR * scale * cam.z, sx = (Math.random() - 0.5) * shake, sy = (Math.random() - 0.5) * shake;
+  const rinkSpace = () => ctx.setTransform(k * M[0], k * M[2], k * M[1], k * M[3], DPR * (W / 2 + sx) - k * (M[0] * cam.x + M[1] * cam.y), DPR * (CY + sy) - k * (M[2] * cam.x + M[3] * cam.y));
+  rinkSpace(); // from here on: rink units
+  // boards and ice
+  ctx.fillStyle = "#e9eef4"; rounded(-HL - 16, -HW - 16, 2 * (HL + 16), 2 * (HW + 16), CRN + 16); ctx.fill();
+  ctx.fillStyle = "#c63b44"; rounded(-HL - 16, -HW - 16, 2 * (HL + 16), 2 * (HW + 16), CRN + 16); ctx.fill();
+  ctx.fillStyle = "#f4f6f8"; rounded(-HL - 9, -HW - 9, 2 * (HL + 9), 2 * (HW + 9), CRN + 9); ctx.fill();
+  const ice = ctx.createRadialGradient(0, 0, 60, 0, 0, HL); ice.addColorStop(0, "#f2f9ff"); ice.addColorStop(1, "#d9ebf7");
+  ctx.fillStyle = ice; rounded(-HL, -HW, 2 * HL, 2 * HW, CRN); ctx.fill();
+  ctx.save(); rounded(-HL, -HW, 2 * HL, 2 * HW, CRN); ctx.clip();
+  ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.6; // skate scratches, the same every frame
+  for (const [x, y, r, a] of SCRATCH) { ctx.beginPath(); ctx.arc(x, y, r, a, a + 0.5); ctx.stroke(); }
+  ctx.globalAlpha = 1;
+  // lines: goal lines, blue lines, the red middle line, circles and creases
+  ctx.fillStyle = "#d8404a"; ctx.fillRect(-5, -HW, 10, 2 * HW);
+  ctx.fillStyle = "#2e6fd6"; for (const f of [-1, 1]) ctx.fillRect(f * HL * 0.27 - 7, -HW, 14, 2 * HW);
+  ctx.fillStyle = "#d8404a"; for (const f of [-1, 1]) ctx.fillRect(f * GL - 2, -HW, 4, 2 * HW);
+  ctx.strokeStyle = "#2e6fd6"; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(0, 0, 90, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = "#2e6fd6"; ctx.beginPath(); ctx.arc(0, 0, 7, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#d8404a";
+  for (const fx of [-1, 1]) for (const fy of [-1, 1]) { const x = fx * (GL - 130), y = fy * 150; ctx.beginPath(); ctx.arc(x, y, 70, 0, Math.PI * 2); ctx.stroke(); ctx.fillStyle = "#d8404a"; ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2); ctx.fill(); }
+  for (const f of [-1, 1]) { ctx.fillStyle = "#7cc2f3aa"; ctx.beginPath(); ctx.moveTo(f * GL, -70); ctx.arc(f * GL, 0, 70, f < 0 ? -Math.PI / 2 : Math.PI / 2, f < 0 ? Math.PI / 2 : Math.PI * 1.5); ctx.closePath(); ctx.fill(); }
+  ctx.restore();
+  // nets: the goal light glows behind the net that was just scored on
+  for (const side of [0, 1]) {
+    const f = side === 1 ? 1 : -1;
+    lamps[side] *= Math.exp(-dt * 1.2);
+    if (lamps[side] > 0.02) { const gl = ctx.createRadialGradient(f * (GL + GD), 0, 0, f * (GL + GD), 0, 160); gl.addColorStop(0, `rgba(255,60,60,${lamps[side] * (0.6 + Math.sin(now / 90) * 0.3)})`); gl.addColorStop(1, "rgba(255,60,60,0)"); ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(f * (GL + GD), 0, 160, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = "#ffffffcc"; ctx.fillRect(Math.min(f * GL, f * (GL + GD)), -GW, GD, 2 * GW);
+    ctx.strokeStyle = "#9aa7b4"; ctx.lineWidth = 1; ctx.beginPath();
+    for (let y = -GW + 10; y < GW; y += 10) { ctx.moveTo(f * GL, y); ctx.lineTo(f * (GL + GD), y); }
+    for (let x = 8; x < GD; x += 8) { ctx.moveTo(f * (GL + x), -GW); ctx.lineTo(f * (GL + x), GW); }
+    ctx.stroke();
+    ctx.strokeStyle = "#d32f3a"; ctx.lineWidth = 6; ctx.lineJoin = "round"; ctx.beginPath(); ctx.moveTo(f * GL, -GW); ctx.lineTo(f * (GL + GD), -GW); ctx.lineTo(f * (GL + GD), GW); ctx.lineTo(f * GL, GW); ctx.stroke();
+  }
+  // the puck: shadow, trail when fast, body
+  const px = puck.x + pred.offX, py = puck.y + pred.offY, speed = Math.hypot(puck.vx, puck.vy), r = CONFIG.puckR;
+  pred.offX *= Math.exp(-dt * 12); pred.offY *= Math.exp(-dt * 12);
+  trail.push({ x: px, y: py }); if (trail.length > 10) trail.shift();
+  if (speed > 500 && !puck.c) trail.forEach((p, i) => { ctx.fillStyle = `rgba(30,40,60,${(i / trail.length) * 0.22})`; ctx.beginPath(); ctx.arc(p.x, p.y, r * (0.4 + i / 18), 0, Math.PI * 2); ctx.fill(); });
+  const list = drawList(g);
+  for (const d of list) { ctx.fillStyle = "#1b2a4030"; ctx.beginPath(); ctx.ellipse(d.x + 5, d.y + 6, d.goalie ? 30 : 22, d.goalie ? 30 : 22, 0, 0, Math.PI * 2); ctx.fill(); }
+  // skaters: ice spray, stick, body in the team color, each person's helmet in their own color
+  for (const d of list) {
+    if (d.spray && Math.random() < 0.6) parts.push({ x: d.x + (Math.random() - 0.5) * 20, y: d.y + (Math.random() - 0.5) * 20, vx: (Math.random() - 0.5) * 160, vy: (Math.random() - 0.5) * 160, life: 0.35, color: "#ffffff", size: 4 });
+    const R = d.goalie ? CONFIG.goalieR : CONFIG.skaterR, c = Math.cos(d.f), s = Math.sin(d.f);
+    if (d.mine) { ctx.strokeStyle = `rgba(255,209,102,${0.5 + Math.sin(now / 180) * 0.25})`; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(d.x, d.y, R + 9, 0, Math.PI * 2); ctx.stroke(); }
+    if (!d.goalie) { // the stick: shaft from the right hand to the blade
+      const st = stickOf(d), hx = d.x + c * 8 - s * 12, hy = d.y + s * 8 + c * 12;
+      ctx.strokeStyle = "#4a3523"; ctx.lineWidth = 5; ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(st.x, st.y); ctx.stroke();
+      ctx.strokeStyle = "#111"; ctx.lineWidth = 7; ctx.beginPath(); ctx.moveTo(st.x - s * 9, st.y + c * 9); ctx.lineTo(st.x + s * 3, st.y - c * 3); ctx.stroke();
+    }
+    ctx.fillStyle = TEAM_COLORS[d.team]; ctx.beginPath(); ctx.arc(d.x, d.y, R, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = d.check ? "#ffffff" : TEAM_DARK[d.team]; ctx.lineWidth = d.check ? 5 : 3.5; ctx.stroke();
+    if (d.goalie) { ctx.save(); ctx.translate(d.x, d.y); ctx.rotate(d.f); ctx.fillStyle = "#f4f6f8"; ctx.fillRect(8, -R - 2, 10, 2 * R + 4); ctx.strokeStyle = TEAM_DARK[d.team]; ctx.lineWidth = 2; ctx.strokeRect(8, -R - 2, 10, 2 * R + 4); ctx.restore(); }
+    ctx.fillStyle = "#ffffff38"; ctx.beginPath(); ctx.arc(d.x - R * 0.25, d.y - R * 0.3, R * 0.45, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = d.color || (d.goalie ? "#f4f6f8" : TEAM_DARK[d.team]); ctx.beginPath(); ctx.arc(d.x + c * 4, d.y + s * 4, R * 0.42, 0, Math.PI * 2); ctx.fill();
+    if (d.stun) { ctx.fillStyle = "#ffd166"; for (let i = 0; i < 3; i++) { const a = now / 150 + i * 2.1; ctx.beginPath(); ctx.arc(d.x + Math.cos(a) * 16, d.y + Math.sin(a) * 16, 3.5, 0, Math.PI * 2); ctx.fill(); } }
+  }
+  if (puck.w !== 1 || g.phase === "play") {
+    ctx.fillStyle = "#00000030"; ctx.beginPath(); ctx.arc(px + 2, py + 3, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#16181d"; ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#ffffff40"; ctx.beginPath(); ctx.arc(px - 2.5, py - 2.5, r * 0.4, 0, Math.PI * 2); ctx.fill();
+  }
+  if (me.charging) { const ch = clamp((now - me.charging) / CONFIG.chargeMs, 0, 1); ctx.strokeStyle = ch >= 1 ? "#ff5a4a" : "#ffd166"; ctx.lineWidth = 6; ctx.beginPath(); ctx.arc(me.x, me.y, CONFIG.skaterR + 16, -Math.PI / 2, -Math.PI / 2 + ch * Math.PI * 2); ctx.stroke(); }
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i]; p.life -= dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.92; p.vy *= 0.92;
+    if (p.life <= 0) { parts.splice(i, 1); continue; }
+    ctx.globalAlpha = Math.min(1, p.life * 2.5); ctx.fillStyle = p.color; ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+  // names, upright on screen
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+  if (!ATTRACT) for (const d of list) {
+    const [x, y] = toScreen(d.x, d.y), label = d.mine ? "You" : d.name, R = (d.goalie ? CONFIG.goalieR : CONFIG.skaterR) * scale * cam.z;
+    ctx.font = `700 ${d.mine ? 13 : 11}px system-ui, sans-serif`; ctx.lineWidth = 3; ctx.strokeStyle = "#0009";
+    ctx.strokeText(label, x + sx, y + sy - R - 5); ctx.fillStyle = d.mine ? "#ffd166" : d.bot ? "#ffffffbb" : "#fff"; ctx.fillText(label, x + sx, y + sy - R - 5);
+  }
+  if (joy) { // the thumb stick
+    ctx.fillStyle = "#ffffff1c"; ctx.strokeStyle = "#ffffff55"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(joy.ox, joy.oy, 52, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    const dx = joy.x - joy.ox, dy = joy.y - joy.oy, d = Math.hypot(dx, dy), m = Math.min(1, 52 / (d || 1));
+    ctx.fillStyle = "#ffffff66"; ctx.beginPath(); ctx.arc(joy.ox + dx * m, joy.oy + dy * m, 24, 0, Math.PI * 2); ctx.fill();
+  }
+}
+function rounded(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+const SCRATCH = (() => { let a = 7; const rnd = () => { a = (a * 16807) % 2147483647; return a / 2147483647; }; return Array.from({ length: 70 }, () => [(rnd() - 0.5) * 2 * HL, (rnd() - 0.5) * 2 * HW, 40 + rnd() * 160, rnd() * Math.PI * 2]); })();
+
+// Sounds, made on the fly with WebAudio (no files).
+let audio = null, noise = null;
+function unlockAudio() {
+  if (audio || ATTRACT) return;
+  try { audio = new AudioContext(); noise = audio.createBuffer(1, audio.sampleRate * 1.2, audio.sampleRate); const d = noise.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; } catch {}
+}
+function tone(type, f0, f1, len, vol, at = 0) {
+  const t = audio.currentTime + at, o = audio.createOscillator(), gain = audio.createGain();
+  o.type = type; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + len);
+  gain.gain.setValueAtTime(vol, t); gain.gain.exponentialRampToValueAtTime(0.001, t + len);
+  o.connect(gain).connect(audio.destination); o.start(t); o.stop(t + len + 0.02);
+}
+function hiss(len, vol, freq) {
+  const src = audio.createBufferSource(), f = audio.createBiquadFilter(), gain = audio.createGain(), t = audio.currentTime;
+  src.buffer = noise; f.type = "bandpass"; f.frequency.value = freq; gain.gain.setValueAtTime(vol, t); gain.gain.exponentialRampToValueAtTime(0.001, t + len);
+  src.connect(f).connect(gain).connect(audio.destination); src.start(t); src.stop(t + len);
+}
+function sfx(kind, power = 1) {
+  if (!audio) return;
+  if (kind === "shot") { tone("triangle", 900, 300, 0.06, 0.25); hiss(0.05, 0.15, 3000); }
+  if (kind === "slap") { tone("square", 260, 80, 0.1, 0.2); hiss(0.12, 0.4, 2200); }
+  if (kind === "save") tone("sine", 220, 120, 0.12, 0.25);
+  if (kind === "board") tone("sine", 140, 70, 0.14, 0.08 + power * 0.25);
+  if (kind === "post") { tone("square", 1200, 1180, 0.25, 0.08); tone("sine", 1800, 1790, 0.3, 0.06); }
+  if (kind === "check") { tone("sawtooth", 120, 50, 0.18, 0.25); hiss(0.15, 0.3, 700); }
+  if (kind === "whoosh") hiss(0.18, 0.12, 1600);
+  if (kind === "horn") { tone("sawtooth", 196, 190, 1.1, 0.16); tone("sawtooth", 247, 240, 1.1, 0.12); tone("sawtooth", 294, 290, 1.1, 0.1); }
+  if (kind === "whistle") { tone("sine", 2400, 2350, 0.16, 0.12); tone("sine", 2400, 2300, 0.32, 0.12, 0.22); }
+}
+
+// ── HUD & RESULTS ───────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+let board = null, boardFor = -1, msgUntil = 0, dropped = false;
+const seen = { score: "", id: -1, ko: -1, phase: "", period: 0 };
+const startedAt = performance.now();
+const PERIOD_NAMES = ["", "1st", "2nd", "3rd"];
+function nameOf(id) {
+  if (!id) return "Someone";
+  if (id === net.sessionId) return myName;
+  if (isGoalie(id)) return GOALIE_NAMES[+id[1]];
+  if (isBot(id)) return BOT_NAMES[+id.slice(1)] || "Bot";
+  return String((S.entities.players[id] || {}).n || "Player");
+}
+function say(html, ms) { $("msg").innerHTML = html; msgUntil = performance.now() + ms; }
+function hud(g, now) {
+  const team = teamOf(g, net.sessionId), t = Date.now(), score = g.score.join("-");
+  if (seen.id === g.id && score !== seen.score && g.last) { // a goal: shown from the state, so everyone sees it
+    const L = g.last, side = 1 - L.t, gx = (side === 1 ? 1 : -1) * (GL + GD / 2);
+    sparks(gx, 0, TEAM_COLORS[L.t], 50, 520, 0.9, 7); sparks(gx, 0, "#ffffff", 24, 400, 0.7); shake = 16; lamps[side] = 1;
+    const who = !L.id ? `for ${TEAM_NAMES[L.t]}` : (L.id === net.sessionId ? "You" : esc(L.n)) + (L.own ? " scored on their own net!" : ` for ${TEAM_NAMES[L.t]}`);
+    say(`<span style="color:${TEAM_COLORS[L.t]}">GOAL!</span><small>${who}</small>`, CONFIG.goalMs - 300); sfx("horn");
+  }
+  if (seen.id === g.id && g.phase === "break" && seen.phase !== "break") { say(g.golden ? `<span style="color:#ffd166">OVERTIME</span><small>Next goal wins</small>` : `END OF ${PERIOD_NAMES[g.period] || ""}<small>${TEAM_NAMES[0]} ${g.score[0]} – ${g.score[1]} ${TEAM_NAMES[1]}</small>`, CONFIG.breakMs - 200); sfx("whistle"); }
+  if (g.ko !== seen.ko && g.phase === "play") sfx("whistle");
+  if (g.phase === "over" && seen.phase !== "over") { say(g.win >= 0 ? `<span style="color:${TEAM_COLORS[g.win]}">FINAL</span>` : "FINAL", 1500); sfx("horn"); }
+  if (seen.id !== g.id) msgUntil = 0;
+  Object.assign(seen, { score, id: g.id, ko: g.ko, phase: g.phase, period: g.period });
+  $("msg").classList.toggle("on", now < msgUntil);
+  $("s0").textContent = g.score[0]; $("s1").textContent = g.score[1];
+  $("s0").classList.toggle("me", team === 0); $("s1").classList.toggle("me", team === 1);
+  const left = g.phase === "goal" || g.phase === "break" ? g.left : Math.max(0, Math.min(CONFIG.periodMs, g.endsAt - Math.max(t, g.kickAt))), sec = Math.ceil(left / 1000);
+  $("clock").innerHTML = g.phase === "over" ? "FINAL" : g.golden ? "OT<small>NEXT GOAL WINS</small>" : `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}<small>${PERIOD_NAMES[g.period] || ""} PERIOD</small>`;
+  $("clock").classList.toggle("ot", !!g.golden);
+  if (ATTRACT) { $("score").hidden = true; $("hint").textContent = $("net").textContent = ""; return; }
+  $("hint").textContent = team < 0 ? "Both teams are full. You're in the next game." : touchUI ? `You're ${TEAM_NAMES[team]}. Drag to skate · hold SHOOT, let go to fire · PASS · CHECK. Score on the ${wide ? "right" : "top"}.` : `You're ${TEAM_NAMES[team]}. WASD/arrows skate · hold Space to charge a shot · X pass · C check. Score on the ${wide ? "right" : "top"}.`;
+  $("hint").style.opacity = now - startedAt < 9000 || team < 0 ? 1 : 0;
+  const n = livePlayers().length;
+  $("net").textContent = net.offline ? "Offline: playing with bots" : dropped ? "Reconnecting…" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the puck and bots" : ""}`;
+  const card = g.phase === "over" && t > g.overAt - CONFIG.resultsMs + 1500;
+  $("over").hidden = !card;
+  if (card) {
+    const won = team >= 0 && g.win === team;
+    $("winner").textContent = won ? "You win!" : g.win >= 0 ? `${TEAM_NAMES[g.win]} wins!` : "A draw";
+    $("winner").style.color = g.win >= 0 ? TEAM_COLORS[g.win] : "#fff";
+    $("final").innerHTML = `<span style="color:${TEAM_COLORS[0]}">${TEAM_NAMES[0]}</span> ${g.score[0]} – ${g.score[1]} <span style="color:${TEAM_COLORS[1]}">${TEAM_NAMES[1]}</span>`;
+    const scorers = Object.entries(g.goals || {}).sort((a, b) => b[1][0] - a[1][0]);
+    $("scorers").innerHTML = scorers.length ? scorers.map(([id, [n, name]]) => `<li class="${id === net.sessionId ? "me" : ""}">${esc(id === net.sessionId ? "You" : name)}<span>${n}</span></li>`).join("") : "<li>Nobody scored.</li>";
+    $("again").hidden = team < 0;
+    $("again").textContent = myReady === g.id ? "Waiting for the others…" : "Play again";
+    $("next").textContent = `Next game in ${Math.max(0, Math.ceil((g.overAt - t) / 1000))}s`;
+    if (boardFor !== g.id) { boardFor = g.id; showBoard(((g.goals || {})[net.sessionId] || [0])[0]); }
+  }
+}
+function showBoard(myGoals) {
+  const list = $("board");
+  if (!board) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
+  list.innerHTML = "<li>Loading…</li>";
+  (myGoals > 0 ? board.submit(myGoals, "inc").catch(() => null) : Promise.resolve()).then(() => board.top(10)).then(({ entries }) => {
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : "<li>No goals yet. Be the first.</li>";
+  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+}
+$("again").onclick = () => { const g = game(); if (g && g.phase === "over") { myReady = g.id; net.me.set("rdy", g.id); } };
+
+/** Two players picked the same color at once (the joiner's first state can be empty): the later sessionId picks again. */
+function fixColor() {
+  const others = Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId);
+  if (!others.some(([id, p]) => p.c === myColor && id < net.sessionId)) return;
+  const taken = new Set(others.map(([, p]) => p.c)); // bots wear plain team helmets, so only people's colors count
+  myColor = COLORS.find((c) => !taken.has(c)) || myColor; net.me.set("c", myColor);
+}
+
+// ── INPUT ───────────────────────────────────────────────────────────────────────────
+const touchUI = matchMedia("(pointer: coarse)").matches && !ATTRACT;
+const keys = new Set();
+let joy = null; // the thumb stick: { id, ox, oy, x, y } in screen px
+/** Where I want to skate, in rink directions: the keys or the thumb stick, turned from screen to rink by the view. */
+function myInput() {
+  if (ATTRACT) return [0, 0];
+  let u = (keys.has("arrowright") || keys.has("d") ? 1 : 0) - (keys.has("arrowleft") || keys.has("a") ? 1 : 0);
+  let v = (keys.has("arrowdown") || keys.has("s") ? 1 : 0) - (keys.has("arrowup") || keys.has("w") ? 1 : 0);
+  if (joy) { const dx = joy.x - joy.ox, dy = joy.y - joy.oy, d = Math.hypot(dx, dy); u = d > 6 ? (dx / d) * Math.min(1, d / 46) : 0; v = d > 6 ? (dy / d) * Math.min(1, d / 46) : 0; }
+  const l = Math.hypot(u, v); if (l > 1) { u /= l; v /= l; }
+  return [M[0] * u + M[2] * v, M[1] * u + M[3] * v];
+}
+addEventListener("keydown", (e) => {
+  const k = e.key.toLowerCase(); unlockAudio();
+  if (["arrowleft", "arrowright", "arrowup", "arrowdown", " "].includes(k)) e.preventDefault();
+  keys.add(k);
+  if (e.repeat) return;
+  if (k === " " || k === "k") act.shoot = true;
+  if (k === "x" || k === "shift" || k === "l") act.pass = true;
+  if (k === "c" || k === "j") act.check = true;
+});
+addEventListener("keyup", (e) => { const k = e.key.toLowerCase(); keys.delete(k); if (k === " " || k === "k") act.shoot = false; });
+addEventListener("blur", () => { keys.clear(); act.shoot = false; });
+cv.addEventListener("pointerdown", (e) => {
+  e.preventDefault(); unlockAudio();
+  if (e.pointerType === "mouse") { act.shoot = true; return; } // a mouse click shoots too
+  if (!joy) { joy = { id: e.pointerId, ox: e.clientX, oy: e.clientY, x: e.clientX, y: e.clientY }; cv.setPointerCapture(e.pointerId); }
+});
+cv.addEventListener("pointermove", (e) => { if (joy && e.pointerId === joy.id) { joy.x = e.clientX; joy.y = e.clientY; } });
+for (const ev of ["pointerup", "pointercancel"]) cv.addEventListener(ev, (e) => { if (e.pointerType === "mouse") act.shoot = false; if (joy && e.pointerId === joy.id) joy = null; });
+$("pad").hidden = !touchUI;
+for (const [id, down, up] of [["bShoot", () => (act.shoot = true), () => (act.shoot = false)], ["bPass", () => (act.pass = true), null], ["bCheck", () => (act.check = true), null]]) {
+  const b = $(id);
+  b.addEventListener("pointerdown", (e) => { e.preventDefault(); unlockAudio(); b.setPointerCapture(e.pointerId); b.classList.add("on"); down(); });
+  for (const ev of ["pointerup", "pointercancel"]) b.addEventListener(ev, () => { b.classList.remove("on"); if (up) up(); });
+}
+document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+
+// ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
+let last = performance.now(), lastHb = 0, lastHud = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  const realNow = performance.now(); // timed on the real clock: after a long freeze the rAF time can be from before the wake
+  if (lastFrameAt && realNow - lastFrameAt > 1000) { wakeHold = realNow + 700; host.wasHost = false; host.last = null; } lastFrameAt = realNow; // woke from a freeze or a background tab: another player may have run the game meanwhile, so let their state arrive, then adopt it like a new host
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now; // the first frame can be stamped before `last`
+  if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
+  syncViews(dt);
+  if (isHost()) hostTick(dt, now); else host.wasHost = false;
+  const g = game();
+  if (g) {
+    myTick(dt, g, now);
+    draw(g, dt, now);
+    if (now - lastHud > 100) { lastHud = now; hud(g, now); }
+  }
+}
+
+(async function start() {
+  net = await connect();
+  me.id = net.sessionId;
+  net.onState((st) => { S = st; });
+  net.on("grab", (msg, from) => { if (isHost() && msg) applyGrab(msg, from); });
+  net.on("shot", (msg, from) => { if (isHost() && msg) applyShot(msg, from); else if (msg) shotFx(+msg.x, +msg.y, Math.hypot(+msg.vx, +msg.vy)); });
+  net.on("check", (msg, from) => { if (isHost() && msg) applyCheck(from, msg.to); });
+  net.on("knock", (msg) => { if (msg && msg.to === net.sessionId) knocked(+msg.vx || 0, +msg.vy || 0); });
+  net.onDisconnect(() => { dropped = true; $("net").textContent = "Reconnecting…"; });
+  net.onReconnect(() => { dropped = false; });
+  if (!net.offline && typeof MP !== "undefined") board = MP.auth({ key: MP_CONNECT.key, apiUrl: MP_CONNECT.apiUrl }).leaderboard(CONFIG.board);
+  const taken = new Set(Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => p.c));
+  myColor = COLORS.find((c) => !taken.has(c)) || COLORS[Math.floor(Math.random() * COLORS.length)];
+  net.me.set({ n: myName, c: myColor, hb: Date.now() });
+  if (ATTRACT) Object.assign(CONFIG, { goalMs: 1400, faceoffMs: 400, periodMs: 1e9, botShootRange: 520, botSpeed: 0.95, goalieError: 30, goalieSpeed: 220 });
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "name": "Ice Rush",
+  "genre": "sports",
+  "dim": "2D",
+  "mode": "Versus",
+  "players": "2–6",
+  "hook": "3-on-3 hockey: slap shots, body checks, goal horns.",
+  "how": "Skate with real momentum, scoop up the puck and carry it on your stick. Hold to charge a slap shot, pass to a teammate, or body-check whoever has the puck. Each team has a goalie bot; most goals after three periods wins.",
+  "controls": "WASD or arrows to skate, hold Space to shoot, X to pass, C to check, or a thumb stick with Shoot, Pass and Check buttons",
+  "uses": [
+    ["Host-run physics", "One player's browser moves the puck, runs the goalies and keeps the score, so everyone sees the same play; if it leaves, the next player takes over."],
+    ["Leaderboard", "Most goals, for every player."],
+    ["Bots", "Bots fill every empty skater spot and both nets, so it's always 3 on 3 plus goalies."],
+    ["Live sync", "Every skater and the puck move for everyone at once."]
+  ],
+  "ideas": [
+    "Add a power play: a checked player sits out for 5 seconds",
+    "Make the rink bigger with 4 on 4",
+    "Add a fire puck power-up that shoots twice as fast"
+  ]
+}
