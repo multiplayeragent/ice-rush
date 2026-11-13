@@ -89,6 +89,8 @@
  *     on your stick on every screen. Shots and passes are decided on the shooter's screen and sent as
  *     "shot" {x, y, vx, vy}; the host adopts them. A body check is decided by the checker: "check" {to};
  *     the host knocks the puck loose and tells a checked person "knock" {to, vx, vy} (it moves itself).
+ *     For the shots, saves and checks it makes itself (its own, the bots', the goalies'), the host sends
+ *     "fx" {k, x, y, s, by} so every screen sparks and sounds them, not only the host's.
  *   - Someone who joins takes a bot's spot on the team with fewer people, mid-game; someone who leaves
  *     is replaced by a bot. A new host adopts `game`, `puck` and `bots` and carries on.
  *   - ?attract plays offline, bots only (the preview video is recorded from it).
@@ -444,7 +446,7 @@ function hostTick(dt, now) {
     if (puck.c) { const c = bodyOf(puck.c), st = stickOf(c); Object.assign(puck, { x: st.x, y: st.y, vx: c.vx, vy: c.vy }); }
     else {
       const res = stepPuck(puck, dt, [...host.bots.values()].filter((b) => isGoalie(b.id)));
-      if (res.goalie) { puck.h++; saveFx(); } // a save keeps the shooter as the last touch: one that bounces in is still their goal
+      if (res.goalie) { puck.h++; saveFx(true); } // a save keeps the shooter as the last touch: one that bounces in is still their goal
       bounceFx(res);
       if (res.goal >= 0) { g = scoreGoal(g, res.goal, t); }
       else { // who picks it up: the host's own skater and the bots (other people claim it with "grab")
@@ -485,7 +487,7 @@ function applyCheck(from, to) {
   if (to === net.sessionId) knocked(vx, vy);
   else if (host.bots.has(to)) { Object.assign(b, { vx: b.vx + vx, vy: b.vy + vy, stun: performance.now() + CONFIG.stunMs }); }
   else net.send("knock", { to, vx: r0(vx), vy: r0(vy) });
-  checkFx(b.x, b.y);
+  checkFx(b.x, b.y); tellFx("check", b.x, b.y, 0, from);
 }
 
 // ── BOTS ────────────────────────────────────────────────────────────────────────────
@@ -511,7 +513,7 @@ function botTick(b, g, dt, now, t) {
 function releasePuck(id, v, at) {
   const s = bodyOf(id); if (s) s.noPick = performance.now() + CONFIG.noPickMs;
   Object.assign(puck, { x: at.x, y: at.y, vx: v.vx, vy: v.vy, c: "", lt: id }); puck.h++;
-  shotFx(at.x, at.y, Math.hypot(v.vx, v.vy)); writePuck();
+  shotFx(at.x, at.y, Math.hypot(v.vx, v.vy)); tellFx("shot", at.x, at.y, Math.hypot(v.vx, v.vy)); writePuck();
 }
 /** One bot skater's plan: [target x, target y, action ("shoot", "pass", "check" or "")]. */
 function botPlan(b, g, team, now) {
@@ -558,7 +560,7 @@ function goalieTick(b, g, dt, now, t) {
   b.vx = d ? (dx / d) * sp : 0; b.vy = d ? (dy / d) * sp : 0; b.x += b.vx * dt; b.y += b.vy * dt;
   b.f = Math.atan2(puck.y - b.y, puck.x - b.x);
   if (g.phase !== "play" || t < g.kickAt) return;
-  if (!puck.c && Math.hypot(puck.vx, puck.vy) < 260 && Math.hypot(puck.x - b.x, puck.y - b.y) < CONFIG.goalieR + CONFIG.puckR + 8 && now > b.noPick) { giveCarry(b.id); b.holdUntil = now + CONFIG.goalieHold; saveFx(); }
+  if (!puck.c && Math.hypot(puck.vx, puck.vy) < 260 && Math.hypot(puck.x - b.x, puck.y - b.y) < CONFIG.goalieR + CONFIG.puckR + 8 && now > b.noPick) { giveCarry(b.id); b.holdUntil = now + CONFIG.goalieHold; saveFx(true); }
   if (b.carry && now > b.holdUntil) { // pass it out to the most open teammate up the ice
     const mate = g.teams[team].map(bodyOf).filter(Boolean).sort((p, q) => dir * (q.x - p.x))[1] || g.teams[team].map(bodyOf).filter(Boolean)[0];
     const at = { x: b.x + dir * (CONFIG.goalieR + 14), y: b.y };
@@ -639,18 +641,19 @@ function knocked(vx, vy) { me.vx += vx; me.vy += vy; me.stun = performance.now()
 
 // ── DRAW ────────────────────────────────────────────────────────────────────────────
 const cv = document.getElementById("game"), ctx = cv.getContext("2d");
-let W = 0, H = 0, DPR = 1, scale = 1, wide = true, M = [1, 0, 0, 1], CY = 0, shake = 0;
+let W = 0, H = 0, DPR = 1, scale = 1, wide = true, M = [1, 0, 0, 1], CX = 0, CY = 0, shake = 0;
 const cam = { x: 0, y: 0, z: 1 }; // what the view centers on, in rink units, and its zoom (only the preview moves it)
 function fit() {
   DPR = Math.min(2, devicePixelRatio || 1); W = innerWidth; H = innerHeight; cv.width = W * DPR; cv.height = H * DPR; wide = W >= H;
   const long = CONFIG.rinkL + 50, short = CONFIG.rinkW + 50;
-  scale = wide ? Math.min((W - 16) / long, (H - 84) / short) : Math.min((W - 12) / short, (H - 84) / long);
-  CY = H / 2 + 14;
+  const pad = matchMedia("(pointer: coarse)").matches && !ATTRACT, padW = pad && wide ? 190 : 0, padH = pad && !wide ? 120 : 0; // keep the rink clear of the touch buttons
+  scale = wide ? Math.min((W - 16 - padW) / long, (H - 84) / short) : Math.min((W - 12) / short, (H - 84 - padH) / long);
+  CX = (W - padW) / 2; CY = (H - padH) / 2 + 14;
 }
 addEventListener("resize", fit); addEventListener("orientationchange", fit); fit();
 /** The view from your side: you attack to the right (wide screens) or up (tall ones). M maps rink to screen. */
 function setView(team) { const f = team === 1 ? -1 : 1; M = wide ? [f, 0, 0, f] : [0, f, -f, 0]; }
-const toScreen = (x, y) => { x -= cam.x; y -= cam.y; const k = scale * cam.z; return [W / 2 + (M[0] * x + M[1] * y) * k, CY + (M[2] * x + M[3] * y) * k]; };
+const toScreen = (x, y) => { x -= cam.x; y -= cam.y; const k = scale * cam.z; return [CX + (M[0] * x + M[1] * y) * k, CY + (M[2] * x + M[3] * y) * k]; };
 /** The preview zooms in and follows the puck, so the action reads in a small card. */
 function moveCam(dt) {
   if (!ATTRACT) return;
@@ -693,7 +696,14 @@ const parts = [], trail = [], lamps = [0, 0];
 let lastFx = 0;
 function sparks(x, y, color, n, speed, life = 0.5, size = 5) { for (let i = 0; i < n; i++) { const a = Math.random() * Math.PI * 2, s = speed * (0.3 + Math.random()); parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: life * (0.6 + Math.random() * 0.8), color, size: size * (0.5 + Math.random()) }); } }
 function shotFx(x, y, speed) { sparks(x, y, "#ffffff", 8, 120 + speed * 0.15, 0.3, 4); sfx(speed > 1000 ? "slap" : "shot", Math.min(1, speed / CONFIG.shotMax)); }
-function saveFx() { const now = performance.now(); if (now - lastFx < 120) return; lastFx = now; sparks(puck.x, puck.y, "#dff3ff", 12, 220, 0.4); sfx("save"); }
+function saveFx(tell, x = puck.x, y = puck.y) { const now = performance.now(); if (now - lastFx < 120) return; lastFx = now; if (tell) tellFx("save", x, y); sparks(x, y, "#dff3ff", 12, 220, 0.4); sfx("save"); }
+/** The host's shots (its own, the bots', the goalies'), saves and checks: an "fx" event, so every screen sparks and sounds, not just the host's. */
+function tellFx(k, x, y, s = 0, by = "") { if (!net.offline) net.send("fx", { k, x: r0(x), y: r0(y), s: r0(s), by }); }
+function fxFromHost(m) {
+  if (m.k === "shot") shotFx(+m.x, +m.y, +m.s || 0);
+  if (m.k === "save") saveFx(false, +m.x, +m.y);
+  if (m.k === "check" && m.by !== net.sessionId) { sparks(+m.x, +m.y, "#ffffff", 16, 260, 0.45, 6); sfx("check"); } // the checker drew its own
+}
 function checkFx(x, y) { sparks(x, y, "#ffffff", 16, 260, 0.45, 6); shake = Math.max(shake, 7); sfx("check"); }
 function bounceFx(res) { if (res.board > 150) sfx("board", Math.min(1, res.board / 1200)); if (res.post > 300) { sfx("post"); shake = Math.max(shake, 4); } }
 
@@ -704,7 +714,7 @@ function draw(g, dt, now) {
   shake *= Math.exp(-dt * 8);
   moveCam(dt);
   const k = DPR * scale * cam.z, sx = (Math.random() - 0.5) * shake, sy = (Math.random() - 0.5) * shake;
-  const rinkSpace = () => ctx.setTransform(k * M[0], k * M[2], k * M[1], k * M[3], DPR * (W / 2 + sx) - k * (M[0] * cam.x + M[1] * cam.y), DPR * (CY + sy) - k * (M[2] * cam.x + M[3] * cam.y));
+  const rinkSpace = () => ctx.setTransform(k * M[0], k * M[2], k * M[1], k * M[3], DPR * (CX + sx) - k * (M[0] * cam.x + M[1] * cam.y), DPR * (CY + sy) - k * (M[2] * cam.x + M[3] * cam.y));
   rinkSpace(); // from here on: rink units
   // boards and ice
   ctx.fillStyle = "#e9eef4"; rounded(-HL - 16, -HW - 16, 2 * (HL + 16), 2 * (HW + 16), CRN + 16); ctx.fill();
@@ -922,6 +932,7 @@ cv.addEventListener("pointerdown", (e) => {
   if (e.pointerType === "mouse") { act.shoot = true; return; } // a mouse click shoots too
   if (!joy) { joy = { id: e.pointerId, ox: e.clientX, oy: e.clientY, x: e.clientX, y: e.clientY }; cv.setPointerCapture(e.pointerId); }
 });
+cv.addEventListener("contextmenu", (e) => e.preventDefault()); // a right-click shoots too, without the menu
 cv.addEventListener("pointermove", (e) => { if (joy && e.pointerId === joy.id) { joy.x = e.clientX; joy.y = e.clientY; } });
 for (const ev of ["pointerup", "pointercancel"]) cv.addEventListener(ev, (e) => { if (e.pointerType === "mouse") act.shoot = false; if (joy && e.pointerId === joy.id) joy = null; });
 $("pad").hidden = !touchUI;
@@ -957,6 +968,7 @@ function frame(now) {
   net.on("grab", (msg, from) => { if (isHost() && msg) applyGrab(msg, from); });
   net.on("shot", (msg, from) => { if (isHost() && msg) applyShot(msg, from); else if (msg) shotFx(+msg.x, +msg.y, Math.hypot(+msg.vx, +msg.vy)); });
   net.on("check", (msg, from) => { if (isHost() && msg) applyCheck(from, msg.to); });
+  net.on("fx", (msg) => { if (!isHost() && msg) fxFromHost(msg); });
   net.on("knock", (msg) => { if (msg && msg.to === net.sessionId) knocked(+msg.vx || 0, +msg.vy || 0); });
   net.onDisconnect(() => { dropped = true; $("net").textContent = "Reconnecting…"; });
   net.onReconnect(() => { dropped = false; });
