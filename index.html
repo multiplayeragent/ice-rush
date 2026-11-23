@@ -262,6 +262,14 @@ function skate(s, ix, iy, dt, share, now) {
 }
 /** Where a skater's stick blade is. */
 const stickOf = (s, reach = CONFIG.stickReach) => ({ x: s.x + Math.cos(s.f) * reach, y: s.y + Math.sin(s.f) * reach });
+/** Move a puck-sized point from a toward b in short steps that stop at the boards and the nets' walls. */
+function slideTo(a, b) {
+  const p = { x: a.x, y: a.y, vx: 0, vy: 0 }, n = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 6));
+  for (let i = 0; i < n; i++) { p.x += (b.x - a.x) / n; p.y += (b.y - a.y) / n; hitNets(p, CONFIG.puckR, 0); keepInRink(p, CONFIG.puckR, 0); }
+  return { x: p.x, y: p.y };
+}
+/** Where a carried puck sits: on the blade, but never through the boards or through a net's side or back. */
+const bladeSpot = (s) => slideTo(s, stickOf(s));
 /** Push body a out of body b (skaters bump). */
 function bump(a, b, min) {
   const dx = a.x - b.x, dy = a.y - b.y, d = Math.hypot(dx, dy);
@@ -324,7 +332,7 @@ function pickMate(s, team, g) {
 }
 
 // ── GAME (HOST) ─────────────────────────────────────────────────────────────────────
-const host = { last: null, wasHost: false, bots: new Map(), lastPuck: 0, lastBots: 0, lastBody: "" };
+const host = { last: null, wasHost: false, bots: new Map(), lastPuck: 0, lastBots: 0, lastBody: "", checks: new Map() }; // checks: when each skater last checked
 let puck = { x: 0, y: 0, vx: 0, vy: 0, c: "", lt: "", h: 0, s: 0, w: 1 }; // the host's real puck; everyone else's prediction of it
 const isBot = (id) => /^[bg]\d$/.test(id);
 const isGoalie = (id) => /^g\d$/.test(id);
@@ -443,7 +451,7 @@ function hostTick(dt, now) {
   if (puck.c && (!g.teams.flat().includes(puck.c) && !isGoalie(puck.c) || !bodyOf(puck.c))) { puck.c = ""; puck.h++; } // the carrier left
   if (live) {
     puck.w = 0;
-    if (puck.c) { const c = bodyOf(puck.c), st = stickOf(c); Object.assign(puck, { x: st.x, y: st.y, vx: c.vx, vy: c.vy }); }
+    if (puck.c) { const c = bodyOf(puck.c), st = bladeSpot(c); Object.assign(puck, { x: st.x, y: st.y, vx: c.vx, vy: c.vy }); }
     else {
       const res = stepPuck(puck, dt, [...host.bots.values()].filter((b) => isGoalie(b.id)));
       if (res.goalie) { puck.h++; saveFx(true); } // a save keeps the shooter as the last touch: one that bounces in is still their goal
@@ -465,6 +473,8 @@ function applyGrab(msg, from) {
   const g = game();
   if (!g || g.phase !== "play" || msg.g !== g.id || msg.ko !== g.ko || Date.now() < g.kickAt || teamOf(g, from) < 0 || puck.c || puck.w) return;
   if (Math.hypot(+msg.x - puck.x, +msg.y - puck.y) > 90) return;
+  const b = bodyOf(from); // and their stick must be near it on this screen too (with slack: their position is a little old)
+  if (!b || Math.hypot(+msg.x - b.x, +msg.y - b.y) > CONFIG.stickReach + CONFIG.stickR + CONFIG.puckR + 80) return;
   giveCarry(from);
 }
 /** Someone else's screen says it shot or passed: adopt the puck it sent, if they carried it (or it was loose near them). */
@@ -472,16 +482,18 @@ function applyShot(msg, from) {
   const g = game();
   if (!g || g.phase !== "play" || msg.g !== g.id || msg.ko !== g.ko || teamOf(g, from) < 0) return;
   const x = +msg.x, y = +msg.y, vx = +msg.vx, vy = +msg.vy;
-  if (!isFinite(x + y + vx + vy) || (puck.c !== from && (puck.c || Math.hypot(x - puck.x, y - puck.y) > 90))) return;
-  const k = Math.min(1, CONFIG.maxPuck / (Math.hypot(vx, vy) || 1));
-  Object.assign(puck, { x, y, vx: vx * k, vy: vy * k, c: "", lt: from, w: 0 }); puck.h++;
-  shotFx(x, y, Math.hypot(vx, vy)); writePuck();
+  if (!isFinite(x + y + vx + vy) || (puck.c !== from && puck.c) || Math.hypot(x - puck.x, y - puck.y) > (puck.c ? 160 : 90)) return; // let go near where the host has the puck
+  const k = Math.min(1, CONFIG.maxPuck / (Math.hypot(vx, vy) || 1)), at = slideTo(puck, { x, y }); // never through the boards or into a net from behind
+  Object.assign(puck, { x: at.x, y: at.y, vx: vx * k, vy: vy * k, c: "", lt: from, w: 0 }); puck.h++;
+  shotFx(at.x, at.y, Math.hypot(vx, vy)); writePuck();
 }
 /** `from` body-checked `to`: knock them (a person moves itself on "knock"), and the puck comes loose. */
 function applyCheck(from, to) {
   const g = game(), a = bodyOf(from), b = bodyOf(to);
   if (!g || g.phase !== "play" || !a || !b || teamOf(g, from) === teamOf(g, to) || teamOf(g, to) < 0 || isGoalie(to)) return;
   if (Math.hypot(a.x - b.x, a.y - b.y) > CONFIG.skaterR * 2 + 70) return; // slack: their latest position can be a little old
+  if (performance.now() - (host.checks.get(from) || -1e9) < CONFIG.checkEvery * 0.8) return; // one check per cooldown, whoever asks
+  host.checks.set(from, performance.now());
   const d = Math.hypot(b.x - a.x, b.y - a.y) || 1, vx = ((b.x - a.x) / d) * CONFIG.knock, vy = ((b.y - a.y) / d) * CONFIG.knock;
   if (puck.c === to) { Object.assign(puck, { c: "", vx: b.vx * 0.4 + vx * 0.7 + (Math.random() - 0.5) * 120, vy: b.vy * 0.4 + vy * 0.7 + (Math.random() - 0.5) * 120 }); puck.h++; writePuck(); }
   if (to === net.sessionId) knocked(vx, vy);
@@ -501,13 +513,13 @@ function botTick(b, g, dt, now, t) {
   const dx = tx - b.x, dy = ty - b.y, d = Math.hypot(dx, dy), m = Math.min(1, d / 40);
   skate(b, d ? (dx / d) * m : 0, d ? (dy / d) * m : 0, dt, CONFIG.botSpeed * (g.phase === "play" ? 1 : 0.4), now);
   for (const id of g.teams.flat()) { const o = id !== b.id && bodyOf(id); if (o) bump(b, o, CONFIG.skaterR * 2); }
-  if (act === "check" && now > b.checkCd) { b.checkT = now + CONFIG.checkMs; b.checkCd = now + CONFIG.checkEvery * 1.4; }
+  if (act === "check" && now > b.checkCd && b.stun <= now) { b.checkT = now + CONFIG.checkMs; b.checkCd = now + CONFIG.checkEvery * 1.4; }
   if (b.checkT > now) for (const id of g.teams[1 - team]) { const o = bodyOf(id); if (o && Math.hypot(o.x - b.x, o.y - b.y) < CONFIG.skaterR * 2 + 4) { b.checkT = 0; applyCheck(b.id, id); break; } }
   if (!b.carry) return;
   if (act === "shoot") { // wind up, then let it go
     if (!b.shootAt) b.shootAt = now + 150 + Math.random() * 450;
-    if (now >= b.shootAt) { b.shootAt = 0; b.aimY = (Math.random() < 0.5 ? -1 : 1) * GW * (0.55 + Math.random() * 0.25); releasePuck(b.id, shotVel(b, 0.35 + Math.random() * 0.65, 1 - team), stickOf(b)); }
-  } else if (act === "pass") { const mate = pickMate(b, team, g); if (mate) releasePuck(b.id, passVel(b, mate), stickOf(b)); }
+    if (now >= b.shootAt) { b.shootAt = 0; b.aimY = (Math.random() < 0.5 ? -1 : 1) * GW * (0.55 + Math.random() * 0.25); releasePuck(b.id, shotVel(b, 0.35 + Math.random() * 0.65, 1 - team), bladeSpot(b)); }
+  } else if (act === "pass") { const mate = pickMate(b, team, g); if (mate) releasePuck(b.id, passVel(b, mate), bladeSpot(b)); }
 }
 /** The host lets go of the puck for a bot or for itself: it flies from the stick. */
 function releasePuck(id, v, at) {
@@ -604,7 +616,7 @@ function myTick(dt, g, now) {
     }
   }
   if (!live) return;
-  if (puck.c) { const c = bodyOf(puck.c); if (c) { const st = stickOf(c); Object.assign(puck, { x: st.x, y: st.y, vx: c.vx, vy: c.vy }); } return; }
+  if (puck.c) { const c = bodyOf(puck.c); if (c) { const st = bladeSpot(c); Object.assign(puck, { x: st.x, y: st.y, vx: c.vx, vy: c.vy }); } return; }
   const res = stepPuck(puck, dt, ["g0", "g1"].map(bodyOf).filter(Boolean));
   bounceFx(res);
   if (team >= 0 && canPick(me, puck, now)) { // my stick touched it on my screen: it's mine (the host confirms)
@@ -630,7 +642,7 @@ function myActions(g, team, now) {
 }
 /** I shoot or pass: the puck flies from my stick at once on my screen; the host adopts it. */
 function letGo(v, g) {
-  const st = stickOf(me); me.noPick = performance.now() + CONFIG.noPickMs; me.carry = false;
+  const st = bladeSpot(me); me.noPick = performance.now() + CONFIG.noPickMs; me.carry = false;
   if (isHost()) { releasePuck(net.sessionId, v, st); return; }
   Object.assign(puck, { x: st.x, y: st.y, vx: v.vx, vy: v.vy, c: "", lt: net.sessionId }); puck.h++; pred.mineAt = performance.now();
   shotFx(st.x, st.y, Math.hypot(v.vx, v.vy));
@@ -646,7 +658,7 @@ const cam = { x: 0, y: 0, z: 1 }; // what the view centers on, in rink units, an
 function fit() {
   DPR = Math.min(2, devicePixelRatio || 1); W = innerWidth; H = innerHeight; cv.width = W * DPR; cv.height = H * DPR; wide = W >= H;
   const long = CONFIG.rinkL + 50, short = CONFIG.rinkW + 50;
-  const pad = matchMedia("(pointer: coarse)").matches && !ATTRACT, padW = pad && wide ? 190 : 0, padH = pad && !wide ? 120 : 0; // keep the rink clear of the touch buttons
+  const pad = matchMedia("(pointer: coarse)").matches && !ATTRACT, padW = pad && wide ? 190 : 0, padH = pad && !wide ? 180 : 0; // keep the rink clear of the touch buttons (they stand 204px tall)
   scale = wide ? Math.min((W - 16 - padW) / long, (H - 84) / short) : Math.min((W - 12) / short, (H - 84 - padH) / long);
   CX = (W - padW) / 2; CY = (H - padH) / 2 + 14;
 }
@@ -967,9 +979,12 @@ function frame(now) {
   net.onState((st) => { S = st; });
   net.on("grab", (msg, from) => { if (isHost() && msg) applyGrab(msg, from); });
   net.on("shot", (msg, from) => { if (isHost() && msg) applyShot(msg, from); else if (msg) shotFx(+msg.x, +msg.y, Math.hypot(+msg.vx, +msg.vy)); });
-  net.on("check", (msg, from) => { if (isHost() && msg) applyCheck(from, msg.to); });
-  net.on("fx", (msg) => { if (!isHost() && msg) fxFromHost(msg); });
-  net.on("knock", (msg) => { if (msg && msg.to === net.sessionId) knocked(+msg.vx || 0, +msg.vy || 0); });
+  net.on("check", (msg, from) => { if (isHost() && msg && msg.g === game()?.id) applyCheck(from, msg.to); });
+  net.on("fx", (msg, from) => { if (!isHost() && msg && from === livePlayers()[0]) fxFromHost(msg); });
+  net.on("knock", (msg, from) => { // only the host knocks people, and never harder than a check
+    if (!msg || msg.to !== net.sessionId || from !== livePlayers()[0]) return;
+    const vx = +msg.vx || 0, vy = +msg.vy || 0, k = Math.min(1, CONFIG.knock / (Math.hypot(vx, vy) || 1)); knocked(vx * k, vy * k);
+  });
   net.onDisconnect(() => { dropped = true; $("net").textContent = "Reconnecting…"; });
   net.onReconnect(() => { dropped = false; });
   if (!net.offline && typeof MP !== "undefined") board = MP.auth({ key: MP_CONNECT.key, apiUrl: MP_CONNECT.apiUrl }).leaderboard(CONFIG.board);
